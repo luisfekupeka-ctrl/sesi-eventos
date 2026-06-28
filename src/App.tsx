@@ -1,1750 +1,2220 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
 import { 
   Calendar, 
-  Clock, 
-  Users, 
   Plus, 
-  Edit, 
+  Users, 
   Trash2, 
-  LogOut, 
   ChevronRight, 
-  FileText, 
-  Download, 
-  Copy,
-  CheckCircle2,
-  AlertCircle,
+  CheckCircle2, 
+  AlertCircle, 
+  Clock, 
   ArrowLeft,
-  LayoutDashboard,
-  UserCircle,
-  Trophy,
-  Star,
+  Download,
   Search,
-  Filter,
-  MapPin,
-  TrendingUp,
-  PieChart,
-  Settings as SettingsIcon,
+  Settings,
   X,
-  Check
+  PlusCircle,
+  GripVertical,
+  Copy,
+  Printer,
+  Edit,
+  Lock as LockIcon
 } from 'lucide-react';
-import { format, parseISO, isPast, isToday } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import * as XLSX from 'xlsx';
-import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
-import { Event, Registration, EventConfigFields, AppSettings, DEFAULT_SETTINGS, CLASSES } from './types';
+import { motion, AnimatePresence } from 'motion/react';
 
-// --- API Utils ---
+// --- Types ---
 
-const api = {
-  getEvents: async () => {
-    const res = await fetch('/api/events');
-    return res.json();
-  },
-  saveEvent: async (event: Event) => {
-    const res = await fetch('/api/events', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(event)
-    });
-    return res.json();
-  },
-  deleteEvent: async (id: string) => {
-    const res = await fetch(`/api/events/${id}`, { method: 'DELETE' });
-    return res.json();
-  },
-  getRegistrations: async (eventId: string) => {
-    const res = await fetch(`/api/registrations/${eventId}`);
-    return res.json();
-  },
-  saveRegistration: async (reg: Registration) => {
-    const res = await fetch('/api/registrations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(reg)
-    });
-    return res.json();
-  },
-  updateRegistrationStatus: async (id: string, status: 'pending' | 'approved') => {
-    const res = await fetch(`/api/registrations/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    });
-    return res.json();
-  },
-  getSettings: async () => {
-    const res = await fetch('/api/settings');
-    return res.json();
-  },
-  saveSettings: async (settings: AppSettings) => {
-    const res = await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings)
-    });
-    return res.json();
-  }
-};
+interface EventField {
+  id?: number;
+  field_name: string;
+  field_label: string;
+  field_type: 'text' | 'select' | 'radio' | 'textarea';
+  is_required: boolean;
+  options?: string; // Comma separated
+}
 
-const AUTH_KEY = 'sesi_auth_token';
+interface Event {
+  id: number;
+  name: string;
+  type: string; // fallback or legacy
+  description: string;
+  date: string;
+  time: string;
+  max_vagas: number;
+  deadline: string;
+  classes_allowed: string;
+  years_allowed: string;
+  status: string;
+  current_registrations: number;
+  category_id?: number;
+  subcategory_id?: number;
+  category_name?: string;
+  subcategory_name?: string;
+  is_paid?: number;
+  restringir_duplicidade?: number;
+  limitar_vagas_por_ano?: number;
+  vagas_por_ano?: number;
+  fields?: EventField[];
+}
+
+interface Registration {
+  id: number;
+  event_id: number;
+  registration_date: string;
+  data: Record<string, any>;
+}
+
+interface Student {
+  id: number;
+  name: string;
+  grade: string;
+  created_at?: string;
+}
+
+interface Subcategory {
+  id: number;
+  category_id: number;
+  name: string;
+}
+
+interface Category {
+  id: number;
+  name: string;
+  subcategories: Subcategory[];
+}
 
 // --- Components ---
 
-const Badge = ({ children, variant = 'default' }: { children: React.ReactNode, variant?: 'default' | 'warning' | 'danger' | 'success' | 'accent' }) => {
+const Badge = ({ children, variant = 'default' }: { children: React.ReactNode, variant?: 'default' | 'success' | 'danger' | 'warning' }) => {
   const styles = {
-    default: 'bg-slate-100 text-slate-600',
-    warning: 'bg-yellow-100 text-yellow-700',
-    danger: 'bg-red-100 text-red-700',
-    success: 'bg-green-100 text-green-700',
-    accent: 'bg-accent text-slate-900',
+    default: 'bg-slate-100 text-slate-700',
+    success: 'bg-emerald-100 text-emerald-700',
+    danger: 'bg-rose-100 text-rose-700',
+    warning: 'bg-amber-100 text-amber-700',
   };
   return (
-    <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${styles[variant]}`}>
+    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${styles[variant]}`}>
       {children}
     </span>
   );
 };
+const formatYears = (yearsString: string | undefined) => {
+  if (!yearsString || !yearsString.trim()) return "Livre para todos os públicos";
+  
+  const years = yearsString.split(',').map(y => y.trim());
+  const allPossibleYears = ['6° Ano', '7° Ano', '8° Ano', '9° Ano', '1° Ano EM', '2° Ano EM', '3° Ano EM'];
+  
+  const allSelected = allPossibleYears.every(y => years.includes(y));
+  if (allSelected) return "Livre para todos os públicos";
+  
+  const fund2 = ['6° Ano', '7° Ano', '8° Ano', '9° Ano'];
+  const hasOnlyFund2 = fund2.every(y => years.includes(y)) && years.every(y => fund2.includes(y));
+  
+  const em = ['1° Ano EM', '2° Ano EM', '3° Ano EM'];
+  const hasOnlyEM = em.every(y => years.includes(y)) && years.every(y => em.includes(y));
 
-// --- Main App ---
+  if (hasOnlyFund2) return "Ensino Fundamental 2";
+  if (hasOnlyEM) return "Ensino Médio";
+  
+  if (years.length === 1) {
+    return `Somente ${years[0]}`;
+  }
+  
+  if (years.length === 2) {
+    return `${years[0]} e ${years[1]}`;
+  }
+  
+  return years.slice(0, -1).join(', ') + ' e ' + years[years.length - 1];
+};
 
 export default function App() {
-  const [view, setView] = useState<'home' | 'details' | 'register' | 'login' | 'admin'>('home');
+  const [view, setView] = useState<'user' | 'admin'>('user');
   const [events, setEvents] = useState<Event[]>([]);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isViewingRegs, setIsViewingRegs] = useState(false);
+  const [registrations, setRegistrations] = useState<Registration[]>([]);
+  const [regFields, setRegFields] = useState<EventField[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [editingEventId, setEditingEventId] = useState<number | null>(null);
+
+  // New States for Students & Categories
+  const [students, setStudents] = useState<Student[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [adminTab, setAdminTab] = useState<'events' | 'students' | 'categories'>('events');
+  const [studentSearch, setStudentSearch] = useState('');
+  const [studentGradeFilter, setStudentGradeFilter] = useState('');
+
+  // Autocomplete and warning states
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [registrationError, setRegistrationError] = useState<string | null>(null);
+  const [paidChecked, setPaidChecked] = useState(false);
+
+  // Modal states for admin management
+  const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [newStudentName, setNewStudentName] = useState('');
+  const [newStudentGrade, setNewStudentGrade] = useState('6° Ano');
+
+  const [showPasteStudentsModal, setShowPasteStudentsModal] = useState(false);
+  const [pasteStudentGrade, setPasteStudentGrade] = useState('6° Ano');
+  const [pasteStudentNamesText, setPasteStudentNamesText] = useState('');
+
+  const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  const [newSubcategoryName, setNewSubcategoryName] = useState<Record<number, string>>({});
+
+  const checkEligibility = (grade: string) => {
+    if (selectedEvent && selectedEvent.years_allowed && selectedEvent.years_allowed.trim()) {
+      const allowed = selectedEvent.years_allowed.split(',').map(y => y.trim().toLowerCase());
+      if (!allowed.includes(grade.toLowerCase())) {
+        setRegistrationError(`Atenção: O ano escolar "${grade}" não é permitido para este evento.`);
+        return false;
+      }
+    }
+    setRegistrationError(null);
+    return true;
+  };
+
+  const onSelectStudent = (s: Student) => {
+    const parts = s.name.trim().split(' ');
+    const firstName = parts[0];
+    const lastName = parts.slice(1).join(' ');
+    
+    setRegData(prev => ({
+      ...prev,
+      nome: firstName,
+      sobrenome: lastName,
+      ano_escolar: s.grade
+    }));
+    
+    checkEligibility(s.grade);
+    setShowSuggestions(false);
+  };
+
+  const startRegistration = async (event: Event) => {
+    const details = await fetchEventDetails(event.id);
+    setSelectedEvent(details);
+    setRegData({
+      nome: '',
+      sobrenome: '',
+      ano_escolar: '',
+      turma_letra: ''
+    });
+    setRegistrationError(null);
+    setPaidChecked(false);
+    setShowSuggestions(false);
+    setIsRegistering(true);
+  };
+
+  // Form States
+  const [newEvent, setNewEvent] = useState<Partial<Event>>({
+    name: '',
+    type: 'Oficina',
+    description: '',
+    date: '',
+    time: '',
+    max_vagas: 30,
+    deadline: '',
+    classes_allowed: '',
+    years_allowed: '',
+    category_id: undefined,
+    subcategory_id: undefined,
+    is_paid: 0,
+    restringir_duplicidade: 0,
+    limitar_vagas_por_ano: 0,
+    vagas_por_ano: undefined,
+    fields: [
+      { field_name: 'nome', field_label: 'Nome', field_type: 'text', is_required: true },
+      { field_name: 'sobrenome', field_label: 'Sobrenome', field_type: 'text', is_required: true },
+      { 
+        field_name: 'ano_escolar', 
+        field_label: 'Ano Escolar', 
+        field_type: 'select', 
+        is_required: true, 
+        options: '6° Ano, 7° Ano, 8° Ano, 9° Ano, 1° Ano EM, 2° Ano EM, 3° Ano EM' 
+      },
+      { 
+        field_name: 'turma_letra', 
+        field_label: 'Letra da Turma', 
+        field_type: 'select', 
+        is_required: true, 
+        options: 'A, B, C, D, E' 
+      }
+    ]
+  });
+
+  const [regData, setRegData] = useState<Record<string, any>>({});
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const [fetchedEvents, fetchedSettings] = await Promise.all([
-          api.getEvents(),
-          api.getSettings()
-        ]);
-        setEvents(fetchedEvents);
-        setSettings(fetchedSettings);
-        
-        const token = localStorage.getItem(AUTH_KEY);
-        if (token) {
-          setIsAdmin(true);
-        }
-      } catch (error) {
-        console.error("Failed to load data", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    init();
+    fetchEvents();
+    fetchStudents();
+    fetchCategories();
   }, []);
 
-  const refreshData = async () => {
+  const fetchEvents = async () => {
+    setLoading(true);
     try {
-      const [fetchedEvents, fetchedSettings] = await Promise.all([
-        api.getEvents(),
-        api.getSettings()
-      ]);
-      setEvents(fetchedEvents);
-      setSettings(fetchedSettings);
-      if (selectedEvent) {
-        const updated = fetchedEvents.find((e: Event) => e.id === selectedEvent.id);
-        if (updated) setSelectedEvent(updated);
-      }
-    } catch (error) {
-      console.error("Failed to refresh data", error);
+      const res = await fetch('/api/events');
+      const data = await res.json();
+      setEvents(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem(AUTH_KEY);
-    setIsAdmin(false);
-    setView('home');
+  const fetchStudents = async () => {
+    try {
+      const res = await fetch('/api/students');
+      const data = await res.json();
+      setStudents(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch('/api/categories');
+      const data = await res.json();
+      setCategories(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchEventDetails = async (id: number) => {
+    try {
+      const res = await fetch(`/api/events/${id}`);
+      const data = await res.json();
+      setSelectedEvent(data);
+      return data;
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchRegistrations = async (id: number) => {
+    try {
+      const res = await fetch(`/api/events/${id}/registrations`);
+      const data = await res.json();
+      setRegistrations(data.registrations);
+      setRegFields(data.fields);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newStudentName.trim()) return;
+    try {
+      const res = await fetch('/api/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newStudentName.trim(), grade: newStudentGrade })
+      });
+      if (res.ok) {
+        setNewStudentName('');
+        setShowAddStudentModal(false);
+        fetchStudents();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Erro ao adicionar aluno.');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handlePasteStudents = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const names = pasteStudentNamesText.split('\n').map(n => n.trim()).filter(Boolean);
+    if (names.length === 0) return;
+    try {
+      const res = await fetch('/api/students/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grade: pasteStudentGrade, names })
+      });
+      if (res.ok) {
+        setPasteStudentNamesText('');
+        setShowPasteStudentsModal(false);
+        fetchStudents();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Erro ao adicionar alunos.');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteStudent = async (id: number) => {
+    if (!confirm('Deseja realmente remover este aluno?')) return;
+    try {
+      const res = await fetch(`/api/students/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchStudents();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteRegistration = async (id: number) => {
+    if (!confirm('Deseja realmente remover esta inscrição?')) return;
+    try {
+      const res = await fetch(`/api/registrations/${id}`, { method: 'DELETE' });
+      if (res.ok && selectedEvent) {
+        fetchRegistrations(selectedEvent.id);
+        fetchEvents(); // update counts
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+
+  const handleAddCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCategoryName.trim()) return;
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newCategoryName.trim() })
+      });
+      if (res.ok) {
+        setNewCategoryName('');
+        setShowAddCategoryModal(false);
+        fetchCategories();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Erro ao adicionar categoria.');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCategory = async (id: number) => {
+    if (!confirm('Deseja realmente remover esta categoria? Isso removerá todas as subcategorias vinculadas.')) return;
+    try {
+      const res = await fetch(`/api/categories/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchCategories();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddSubcategory = async (categoryId: number) => {
+    const name = newSubcategoryName[categoryId];
+    if (!name || !name.trim()) return;
+    try {
+      const res = await fetch(`/api/categories/${categoryId}/subcategories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() })
+      });
+      if (res.ok) {
+        setNewSubcategoryName(prev => ({ ...prev, [categoryId]: '' }));
+        fetchCategories();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Erro ao adicionar tipo.');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteSubcategory = async (id: number) => {
+    if (!confirm('Deseja realmente remover este tipo?')) return;
+    try {
+      const res = await fetch(`/api/subcategories/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchCategories();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const exportStudentsToCSV = () => {
+    const filtered = students.filter(s => {
+      const matchSearch = s.name.toLowerCase().includes(studentSearch.toLowerCase());
+      const matchGrade = !studentGradeFilter || s.grade === studentGradeFilter;
+      return matchSearch && matchGrade;
+    });
+
+    if (filtered.length === 0) return;
+    
+    const headers = ['Nome', 'Ano Escolar'];
+    const rows = filtered.map(s => [s.name, s.grade]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `alunos_cadastrados.csv`;
+    link.click();
+  };
+
+  const resetNewEvent = () => {
+    setNewEvent({
+      name: '',
+      type: 'Oficina',
+      description: '',
+      date: '',
+      time: '',
+      max_vagas: 30,
+      deadline: '',
+      classes_allowed: '',
+      years_allowed: '',
+      category_id: undefined,
+      subcategory_id: undefined,
+      is_paid: 0,
+      restringir_duplicidade: 0,
+      limitar_vagas_por_ano: 0,
+      vagas_por_ano: undefined,
+      fields: [
+        { field_name: 'nome', field_label: 'Nome', field_type: 'text', is_required: true },
+        { field_name: 'sobrenome', field_label: 'Sobrenome', field_type: 'text', is_required: true },
+        { 
+          field_name: 'ano_escolar', 
+          field_label: 'Ano Escolar', 
+          field_type: 'select', 
+          is_required: true, 
+          options: '6° Ano, 7° Ano, 8° Ano, 9° Ano, 1° Ano EM, 2° Ano EM, 3° Ano EM' 
+        },
+        { 
+          field_name: 'turma_letra', 
+          field_label: 'Letra da Turma', 
+          field_type: 'select', 
+          is_required: true, 
+          options: 'A, B, C, D, E' 
+        }
+      ]
+    });
+    setEditingEventId(null);
+  };
+
+  const handleSubmitEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const url = editingEventId ? `/api/events/${editingEventId}` : '/api/events';
+    const method = editingEventId ? 'PUT' : 'POST';
+    
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEvent)
+      });
+      if (res.ok) {
+        setIsCreating(false);
+        fetchEvents();
+        resetNewEvent();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleEditEvent = async (event: Event) => {
+    const details = await fetchEventDetails(event.id);
+    if (details) {
+      setNewEvent({
+        ...details,
+        // Ensure date and deadline are correctly formatted for inputs if needed
+        // but since we store them as strings from inputs, they should match
+      });
+      setEditingEventId(event.id);
+      setIsCreating(true);
+    }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEvent) return;
+    try {
+      const res = await fetch(`/api/events/${selectedEvent.id}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: regData })
+      });
+      if (res.ok) {
+        alert('Inscrição realizada com sucesso!');
+        setIsRegistering(false);
+        setRegData({});
+        fetchEvents();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Erro ao realizar inscrição');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteEvent = async (id: number) => {
+    if (!confirm('Tem certeza que deseja excluir este evento?')) return;
+    try {
+      await fetch(`/api/events/${id}`, { method: 'DELETE' });
+      fetchEvents();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const addField = () => {
+    setNewEvent({
+      ...newEvent,
+      fields: [
+        ...(newEvent.fields || []),
+        { field_name: `campo_${Date.now()}`, field_label: 'Novo Campo', field_type: 'text', is_required: false }
+      ]
+    });
+  };
+
+  const removeField = (index: number) => {
+    const fields = [...(newEvent.fields || [])];
+    fields.splice(index, 1);
+    setNewEvent({ ...newEvent, fields });
+  };
+
+  const updateField = (index: number, updates: Partial<EventField>) => {
+    const fields = [...(newEvent.fields || [])];
+    fields[index] = { ...fields[index], ...updates };
+    setNewEvent({ ...newEvent, fields });
+  };
+
+  const isEventFull = (event: Event) => event.current_registrations >= event.max_vagas;
+  const isDeadlinePassed = (event: Event) => new Date() > new Date(event.deadline);
+
+  const exportToCSV = () => {
+    if (!selectedEvent || registrations.length === 0) return;
+    
+    const headers = ['Data Inscrição', ...regFields.map(f => f.field_label)];
+    const rows = registrations.map(r => [
+      new Date(r.registration_date).toLocaleString(),
+      ...regFields.map(f => r.data[f.field_name] || '')
+    ]);
+    
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `inscricoes_${selectedEvent.name.replace(/\s+/g, '_')}.csv`;
+    link.click();
+  };
+
+  const copyToClipboard = () => {
+    if (!selectedEvent || registrations.length === 0) return;
+    
+    const headers = ['Data Inscrição', ...regFields.map(f => f.field_label)];
+    const rows = registrations.map(r => [
+      new Date(r.registration_date).toLocaleString(),
+      ...regFields.map(f => r.data[f.field_name] || '')
+    ]);
+    
+    const text = [
+      headers.join('\t'),
+      ...rows.map(row => row.join('\t'))
+    ].join('\n');
+    
+    navigator.clipboard.writeText(text);
+    alert('Lista copiada para a área de transferência!');
+  };
+
+  const printList = () => {
+    window.print();
+  };
+
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('admin') === 'true') {
+      setShowPinModal(true);
+      // Limpar a URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const handlePinSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setPinError(false);
+    
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pinInput })
+      });
+      
+      const data = await res.json();
+      
+      if (data.authorized) {
+        setIsAdminAuthenticated(true);
+        setView('admin');
+        setShowPinModal(false);
+        setPinInput('');
+      } else {
+        setPinError(true);
+        setPinInput('');
+        setTimeout(() => setPinError(false), 500);
+      }
+    } catch (err) {
+      console.error('Erro no login:', err);
+      setPinError(true);
+      setPinInput('');
+      setTimeout(() => setPinError(false), 500);
+    }
+  };
+
+  const handleSwitchToAdmin = () => {
+    if (isAdminAuthenticated) {
+      setView('admin');
+    } else {
+      setShowPinModal(true);
+    }
+  };
+
+  const handleSwitchToUser = () => {
+    setView('user');
+    setIsCreating(false);
+    setIsViewingRegs(false);
+    setIsRegistering(false);
   };
 
   return (
-    <div className="min-h-screen flex flex-col font-sans bg-slate-50">
+    <div className="min-h-screen bg-[#f8fafc] font-sans text-slate-900">
       {/* Header */}
-      <header className="bg-white border-b-4 border-accent sticky top-0 z-50 shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 h-20 flex items-center justify-between">
-          <div 
-            className="flex items-center gap-3 cursor-pointer" 
-            onClick={() => { setView('home'); setSelectedEvent(null); }}
-          >
-            <div className="w-12 h-12 bg-accent rounded-xl flex items-center justify-center text-slate-900 font-black text-2xl shadow-sm border-2 border-slate-900/5">
-              S
+      <header className="bg-[#004a99] text-white shadow-lg sticky top-0 z-50 no-print">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-[#fff200] p-2 rounded-lg">
+              <Calendar className="w-6 h-6 text-[#004a99]" />
             </div>
             <div>
-              <h1 className="font-black text-slate-900 text-xl tracking-tight leading-none">SESI Eventos</h1>
-              <p className="text-[11px] text-primary font-bold uppercase tracking-widest mt-0.5">Colégio Internacional</p>
+              <h1 className="text-lg font-bold leading-tight">SESI Internacional</h1>
+              <p className="text-[10px] uppercase tracking-widest opacity-80">Portal de Eventos</p>
             </div>
           </div>
-
-          <div className="flex items-center gap-4">
-            {isAdmin ? (
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={() => setView('admin')}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-100 text-sm font-bold text-slate-700 hover:bg-accent hover:text-slate-900 transition-all"
-                >
-                  <LayoutDashboard size={18} />
-                  <span className="hidden sm:inline">Painel ADM</span>
-                </button>
-                <button 
-                  onClick={handleLogout}
-                  className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                >
-                  <LogOut size={22} />
-                </button>
-              </div>
-            ) : (
-              <button 
-                onClick={() => setView('login')}
-                className="px-4 py-2 rounded-lg border-2 border-slate-100 text-sm font-bold text-slate-500 hover:border-accent hover:text-slate-900 transition-all flex items-center gap-2"
-              >
-                <UserCircle size={18} />
-                Área Restrita
-              </button>
-            )}
+          
+          <div className="flex items-center gap-2 bg-white/10 p-1 rounded-full">
+            <button 
+              onClick={handleSwitchToUser}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${view === 'user' ? 'bg-[#fff200] text-[#004a99]' : 'hover:bg-white/10'}`}
+            >
+              Eventos
+            </button>
+            <button 
+              onClick={handleSwitchToAdmin}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${view === 'admin' ? 'bg-[#fff200] text-[#004a99]' : 'hover:bg-white/10'}`}
+            >
+              Painel Admin
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-8">
-        <AnimatePresence mode="wait">
-          {view === 'home' && (
-            <HomeView 
-              events={events} 
-              settings={settings}
-              onSelect={(e) => { setSelectedEvent(e); setView('details'); }} 
-              loading={loading}
-            />
-          )}
-          {view === 'details' && selectedEvent && (
-            <DetailsView 
-              event={selectedEvent} 
-              onBack={() => setView('home')} 
-              onRegister={() => setView('register')}
-            />
-          )}
-          {view === 'register' && selectedEvent && (
-            <RegisterView 
-              event={selectedEvent} 
-              settings={settings}
-              onBack={() => setView('details')} 
-              onSuccess={() => { refreshData(); setView('home'); }}
-            />
-          )}
-          {view === 'login' && (
-            <LoginView 
-              onSuccess={() => { setIsAdmin(true); setView('admin'); }} 
-              onCancel={() => setView('home')}
-            />
-          )}
-          {view === 'admin' && isAdmin && (
-            <AdminDashboard 
-              events={events} 
-              settings={settings}
-              onRefresh={refreshData}
-            />
-          )}
-        </AnimatePresence>
-      </main>
-
-      {/* Footer */}
-      <footer className="py-12 border-t border-slate-200 bg-white mt-20">
-        <div className="max-w-5xl mx-auto px-4">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-8">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center text-slate-900 font-bold">S</div>
-              <span className="font-bold text-slate-900">SESI Internacional</span>
-            </div>
-            <p className="text-slate-400 text-sm">© {new Date().getFullYear()} Colégio SESI Internacional. Todos os direitos reservados.</p>
-            <div className="flex gap-4">
-               <div className="w-8 h-8 rounded-full bg-slate-100"></div>
-               <div className="w-8 h-8 rounded-full bg-slate-100"></div>
-               <div className="w-8 h-8 rounded-full bg-slate-100"></div>
-            </div>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-}
-
-// --- Views ---
-
-function HomeView({ events, settings, onSelect, loading }: { events: Event[], settings: AppSettings, onSelect: (e: Event) => void, loading: boolean }) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [gradeFilter, setGradeFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
-  const [showPast, setShowPast] = useState(false);
-
-  if (loading) return <div className="flex justify-center py-20"><div className="animate-spin rounded-full h-12 w-12 border-b-4 border-accent"></div></div>;
-
-  const filteredEvents = events.filter(event => {
-    const matchesSearch = event.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         event.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesGrade = !gradeFilter || event.allowedGrades?.includes(gradeFilter) || (event.allowedGrades?.length === 0);
-    const matchesType = !typeFilter || event.type === typeFilter;
-    const isEventPast = isPast(parseISO(event.date)) && !isToday(parseISO(event.date));
-    
-    if (showPast) return isEventPast && matchesSearch && matchesGrade && matchesType;
-    return !isEventPast && matchesSearch && matchesGrade && matchesType;
-  });
-
-  const showFilters = settings.visibleFilters.search || settings.visibleFilters.grade || settings.visibleFilters.type;
-
-  return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="space-y-12"
-    >
-      <div className="relative py-12 px-8 rounded-3xl bg-primary overflow-hidden text-white shadow-xl">
-        <div className="absolute top-0 right-0 p-8 opacity-10">
-          <Star size={120} className="text-accent fill-accent" />
-        </div>
-        <div className="relative z-10 max-w-2xl space-y-4">
-          <Badge variant="accent">NOVIDADES</Badge>
-          <h2 className="text-4xl sm:text-5xl font-black tracking-tight">Participe dos nossos eventos!</h2>
-          <p className="text-blue-100 text-lg font-medium">Inscreva-se nas oficinas, palestras e atividades do Colégio SESI Internacional.</p>
-        </div>
-      </div>
-
-      {/* Search and Filters */}
-      {showFilters && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-          {settings.visibleFilters.search && (
-            <div className="md:col-span-2 relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-              <input 
-                type="text" 
-                placeholder="Buscar eventos por nome..." 
-                className="input-field pl-12 py-3"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-          )}
-          {settings.visibleFilters.grade && (
-            <div className="relative">
-              <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <select 
-                className="input-field pl-12 py-3 appearance-none"
-                value={gradeFilter}
-                onChange={(e) => setGradeFilter(e.target.value)}
-              >
-                <option value="">Todas as séries</option>
-                {settings.grades.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </div>
-          )}
-          {settings.visibleFilters.type && (
-            <div className="relative">
-              <select 
-                className="input-field py-3"
-                value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
-              >
-                <option value="">Todos os tipos</option>
-                {settings.eventTypes.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Quick Grade Filters */}
-      {settings.visibleFilters.quickGrades && (
-        <div className="flex flex-wrap gap-3">
-          <button 
-            onClick={() => setGradeFilter('')}
-            className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${gradeFilter === '' ? 'bg-accent text-slate-900 shadow-md' : 'bg-white text-slate-400 hover:text-slate-600 border border-slate-100'}`}
-          >
-            Todos
-          </button>
-          {settings.grades.map(g => (
-            <button 
-              key={g}
-              onClick={() => setGradeFilter(g)}
-              className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${gradeFilter === g ? 'bg-accent text-slate-900 shadow-md' : 'bg-white text-slate-400 hover:text-slate-600 border border-slate-100'}`}
-            >
-              {g}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h3 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-            <Calendar className="text-accent" />
-            {showPast ? 'Eventos Encerrados' : 'Próximos Eventos'}
-          </h3>
-          <button 
-            onClick={() => setShowPast(!showPast)}
-            className="text-sm font-bold text-primary hover:underline"
-          >
-            {showPast ? 'Ver próximos eventos' : 'Ver eventos encerrados'}
-          </button>
-        </div>
-
-        {filteredEvents.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200">
-            <Calendar className="mx-auto text-slate-200 mb-4" size={64} />
-            <p className="text-slate-400 font-bold text-lg">Nenhum evento encontrado.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {filteredEvents.map((event) => {
-              const isFull = event.currentRegistrations >= event.maxCapacity;
-              const isEventPast = isPast(parseISO(event.date)) && !isToday(parseISO(event.date));
-              return (
-                <motion.div 
-                  key={event.id}
-                  whileHover={!isEventPast ? { y: -8 } : {}}
-                  className={`card flex flex-col cursor-pointer group hover:border-accent transition-all duration-300 ${isEventPast ? 'opacity-75 grayscale-[0.5]' : ''}`}
-                  onClick={() => onSelect(event)}
-                >
-                  <div className={`h-3 ${isEventPast ? 'bg-slate-300' : 'bg-accent'}`}></div>
-                  <div className="p-6 space-y-5 flex-1">
-                    <div className="flex justify-between items-start">
-                      <div className="flex flex-col gap-1">
-                        {isEventPast ? (
-                          <Badge variant="danger">Encerrado</Badge>
-                        ) : (
-                          <Badge variant={isFull ? 'danger' : 'success'}>
-                            {isFull ? 'Vagas esgotadas' : `Restam ${event.maxCapacity - event.currentRegistrations} vagas`}
-                          </Badge>
-                        )}
-                        {event.allowedGrades && event.allowedGrades.length > 0 && (
-                          <Badge variant="warning">Restrito</Badge>
-                        )}
-                      </div>
-                      <span className="text-[10px] font-black text-primary uppercase tracking-widest bg-blue-50 px-2 py-1 rounded">{event.type}</span>
-                    </div>
-                    
-                    <div>
-                      <h3 className="text-xl font-black text-slate-900 group-hover:text-primary transition-colors leading-tight">{event.name}</h3>
-                      <p className="text-slate-500 text-sm line-clamp-2 mt-2 font-medium">{event.description}</p>
-                    </div>
-
-                    <div className="space-y-3 pt-2">
-                      <div className="flex items-center gap-3 text-slate-600 text-sm font-bold">
-                        <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-accent">
-                          <Calendar size={16} />
-                        </div>
-                        <span>{format(parseISO(event.date), "dd 'de' MMMM", { locale: ptBR })}</span>
-                      </div>
-                      <div className="flex items-center gap-3 text-slate-600 text-sm font-bold">
-                        <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-accent">
-                          <Clock size={16} />
-                        </div>
-                        <span>{event.startTime} • {event.duration}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between group-hover:bg-accent/10 transition-colors">
-                    <span className="text-xs font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-900">Ver detalhes</span>
-                    <ChevronRight size={18} className="text-slate-300 group-hover:text-slate-900 group-hover:translate-x-1 transition-all" />
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </motion.div>
-  );
-}
-
-function DetailsView({ event, onBack, onRegister }: { event: Event, onBack: () => void, onRegister: () => void }) {
-  const isFull = event.currentRegistrations >= event.maxCapacity;
-
-  return (
-    <motion.div 
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -20 }}
-      className="max-w-4xl mx-auto space-y-8"
-    >
-      <button onClick={onBack} className="flex items-center gap-2 text-slate-400 font-bold hover:text-primary transition-colors">
-        <ArrowLeft size={20} />
-        <span>Voltar para lista</span>
-      </button>
-
-      <div className="card overflow-visible">
-        <div className="relative">
-          <div className="h-64 bg-primary flex items-center justify-center overflow-hidden rounded-t-xl">
-             <div className="absolute inset-0 opacity-20">
-               <div className="grid grid-cols-12 gap-4 p-8">
-                 {Array.from({ length: 48 }).map((_, i) => (
-                   <div key={i} className="w-4 h-4 rounded-full bg-accent" />
-                 ))}
-               </div>
-             </div>
-             <Trophy size={80} className="text-accent relative z-10 drop-shadow-lg" />
-          </div>
-          
-          <div className="absolute -bottom-6 left-8 right-8">
-            <div className="bg-white p-6 rounded-2xl shadow-xl border border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-4">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-accent rounded-xl flex items-center justify-center text-slate-900">
-                  <Calendar size={24} />
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data do Evento</p>
-                  <p className="font-black text-slate-900 text-lg">{format(parseISO(event.date), "dd 'de' MMMM, yyyy", { locale: ptBR })}</p>
-                </div>
-              </div>
-              <div className="h-10 w-[2px] bg-slate-100 hidden sm:block"></div>
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-accent rounded-xl flex items-center justify-center text-slate-900">
-                  <Clock size={24} />
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Horário</p>
-                  <p className="font-black text-slate-900 text-lg">{event.startTime} ({event.duration})</p>
-                </div>
-              </div>
-              {event.location && (
-                <>
-                  <div className="h-10 w-[2px] bg-slate-100 hidden sm:block"></div>
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-accent rounded-xl flex items-center justify-center text-slate-900">
-                      <MapPin size={24} />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Local</p>
-                      <p className="font-black text-slate-900 text-lg">{event.location}</p>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="p-8 pt-16 space-y-10">
-          <div className="space-y-6">
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="accent">{event.type}</Badge>
-              <Badge variant="default">Público: {event.targetAudience}</Badge>
-              {event.allowedGrades && event.allowedGrades.length > 0 && (
-                <Badge variant="warning">Séries: {event.allowedGrades.join(', ')}</Badge>
-              )}
-              {isFull && <Badge variant="danger">VAGAS ESGOTADAS</Badge>}
-            </div>
-            <h2 className="text-4xl sm:text-5xl font-black text-slate-900 tracking-tight leading-tight">{event.name}</h2>
-            <p className="text-slate-600 leading-relaxed text-xl font-medium">{event.description}</p>
-          </div>
-
-          <div className="bg-slate-50 rounded-3xl p-8 border border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-8">
-            <div className="space-y-1 text-center sm:text-left">
-              <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Vagas Disponíveis</p>
-              <p className="text-3xl font-black text-slate-900">
-                {isFull ? '0' : event.maxCapacity - event.currentRegistrations} <span className="text-lg text-slate-400 font-bold">/ {event.maxCapacity}</span>
-              </p>
-            </div>
-            <button 
-              onClick={onRegister}
-              disabled={isFull}
-              className="w-full sm:w-auto btn-accent py-5 px-12 text-lg flex items-center justify-center gap-3 rounded-2xl"
-            >
-              {isFull ? 'Inscrições Encerradas' : 'Garantir minha vaga'}
-              {!isFull && <ChevronRight size={24} />}
-            </button>
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function RegisterView({ event, onBack, onSuccess, settings }: { event: Event, onBack: () => void, onSuccess: () => void, settings: AppSettings }) {
-  const config: EventConfigFields = JSON.parse(event.configFields);
-  const [formData, setFormData] = useState<any>({});
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Grade restriction check (Immediate validation)
-    const hasRestriction = Array.isArray(event.allowedGrades) && event.allowedGrades.length > 0;
-    const userGrade = formData.serie || formData.parentStudentGrade;
-
-    if (hasRestriction) {
-      if (!userGrade) {
-        setError('A série do aluno é obrigatória para este evento.');
-        return;
-      }
-      if (!event.allowedGrades?.includes(userGrade)) {
-        setError('Este evento não está disponível para sua série.');
-        return;
-      }
-    }
-
-    setSubmitting(true);
-    setError(null);
-    
-    try {
-      const eventRegs = await api.getRegistrations(event.id);
-      
-      // Duplicate prevention (by name and grade)
-      const isDuplicate = eventRegs.some((r: Registration) => {
-        const rName = (r.formData.nome + (r.formData.sobrenome || '')).toLowerCase().replace(/\s/g, '');
-        const fName = (formData.nome + (formData.sobrenome || '')).toLowerCase().replace(/\s/g, '');
-        const rParentStudent = (r.formData.aluno_nome || '').toLowerCase().replace(/\s/g, '');
-        const fParentStudent = (formData.aluno_nome || '').toLowerCase().replace(/\s/g, '');
-        
-        return (rName === fName && rName !== '') || (rParentStudent === fParentStudent && rParentStudent !== '');
-      });
-
-      if (isDuplicate) {
-        setError('Você já possui uma inscrição realizada para este evento.');
-        setSubmitting(false);
-        return;
-      }
-
-      if (eventRegs.length >= event.maxCapacity) {
-        setError('Infelizmente as vagas acabaram enquanto você preenchia o formulário.');
-        setSubmitting(false);
-        return;
-      }
-
-      const newReg: Registration = {
-        id: crypto.randomUUID(),
-        eventId: event.id,
-        formData,
-        status: event.approvalMode === 'manual' ? 'pending' : 'approved',
-        createdAt: new Date().toISOString()
-      };
-
-      await api.saveRegistration(newReg);
-      setSuccess(true);
-      setTimeout(() => {
-        onSuccess();
-      }, 2000);
-    } catch (err) {
-      console.error(err);
-      setError('Ocorreu um erro ao processar sua inscrição. Tente novamente.');
-      setSubmitting(false);
-    }
-  };
-
-  const updateField = (field: string, value: string) => {
-    setFormData((prev: any) => ({ ...prev, [field]: value }));
-  };
-
-  if (success) {
-    return (
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="max-w-md mx-auto py-20 text-center space-y-6"
-      >
-        <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
-          <CheckCircle2 size={48} />
-        </div>
-        <div className="space-y-2">
-          <h2 className="text-3xl font-black text-slate-900">Inscrição realizada com sucesso!</h2>
-          <p className="text-slate-500 font-bold">Você será redirecionado em instantes...</p>
-        </div>
-      </motion.div>
-    );
-  }
-
-  return (
-    <motion.div 
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      className="max-w-2xl mx-auto"
-    >
-      <div className="card p-10 space-y-10 border-t-8 border-accent">
-        <div className="text-center space-y-3">
-          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Formulário de Inscrição</h2>
-          <p className="text-primary font-bold text-lg">{event.name}</p>
-        </div>
-
-        {error && (
-          <div className="bg-red-50 text-red-600 p-5 rounded-2xl flex items-center gap-4 text-sm font-bold border border-red-100">
-            <AlertCircle size={24} />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-10">
-          {/* Aluno Fields */}
-          {(config.studentName || config.studentSurname || config.studentGrade || config.studentClass || config.studentEmail || config.studentPhone || config.studentCpf) && (
-            <div className="space-y-6">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-3">
-                <div className="h-[2px] flex-1 bg-slate-100"></div>
-                Dados do Aluno
-                <div className="h-[2px] flex-1 bg-slate-100"></div>
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                {config.studentName && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Nome</label>
-                    <input required type="text" className="input-field py-3" onChange={(e) => updateField('nome', e.target.value)} />
-                  </div>
-                )}
-                {config.studentSurname && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Sobrenome</label>
-                    <input required type="text" className="input-field py-3" onChange={(e) => updateField('sobrenome', e.target.value)} />
-                  </div>
-                )}
-                {config.studentGrade && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Série</label>
-                    <select required className="input-field py-3" onChange={(e) => updateField('serie', e.target.value)}>
-                      <option value="">Selecione...</option>
-                      {settings.grades.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
-                  </div>
-                )}
-                {config.studentClass && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Turma</label>
-                    <select required className="input-field py-3" onChange={(e) => updateField('turma', e.target.value)}>
-                      <option value="">Selecione...</option>
-                      {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                )}
-                {config.studentEmail && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Email do Aluno</label>
-                    <input required type="email" className="input-field py-3" onChange={(e) => updateField('aluno_email', e.target.value)} />
-                  </div>
-                )}
-                {config.studentPhone && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Telefone do Aluno</label>
-                    <input required type="tel" className="input-field py-3" onChange={(e) => updateField('aluno_telefone', e.target.value)} />
-                  </div>
-                )}
-                {config.studentCpf && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">CPF/RG do Aluno</label>
-                    <input required type="text" className="input-field py-3" onChange={(e) => updateField('aluno_documento', e.target.value)} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Responsavel Fields */}
-          {(config.parentName || config.parentPhone || config.parentEmail || config.parentCpf || config.parentStudentName || config.parentStudentGrade || config.parentStudentClass) && (
-            <div className="space-y-6">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-3">
-                <div className="h-[2px] flex-1 bg-slate-100"></div>
-                Dados do Responsável
-                <div className="h-[2px] flex-1 bg-slate-100"></div>
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                {config.parentName && (
-                  <div className="space-y-2 sm:col-span-2">
-                    <label className="text-sm font-bold text-slate-700">Nome do Responsável</label>
-                    <input required type="text" className="input-field py-3" onChange={(e) => updateField('responsavel_nome', e.target.value)} />
-                  </div>
-                )}
-                {config.parentEmail && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Email de Contato</label>
-                    <input required type="email" className="input-field py-3" onChange={(e) => updateField('responsavel_email', e.target.value)} />
-                  </div>
-                )}
-                {config.parentPhone && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Telefone de Contato</label>
-                    <input required type="tel" className="input-field py-3" onChange={(e) => updateField('responsavel_telefone', e.target.value)} />
-                  </div>
-                )}
-                {config.parentCpf && (
-                  <div className="space-y-2 sm:col-span-2">
-                    <label className="text-sm font-bold text-slate-700">CPF/RG do Responsável</label>
-                    <input required type="text" className="input-field py-3" onChange={(e) => updateField('responsavel_documento', e.target.value)} />
-                  </div>
-                )}
-                {config.parentStudentName && (
-                  <div className="space-y-2 sm:col-span-2">
-                    <label className="text-sm font-bold text-slate-700">Nome do Aluno</label>
-                    <input required type="text" className="input-field py-3" onChange={(e) => updateField('aluno_nome', e.target.value)} />
-                  </div>
-                )}
-                {config.parentStudentGrade && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Série do Aluno</label>
-                    <select required className="input-field py-3" onChange={(e) => updateField('parentStudentGrade', e.target.value)}>
-                      <option value="">Selecione...</option>
-                      {settings.grades.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
-                  </div>
-                )}
-                {config.parentStudentClass && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Turma do Aluno</label>
-                    <select required className="input-field py-3" onChange={(e) => updateField('parentStudentClass', e.target.value)}>
-                      <option value="">Selecione...</option>
-                      {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="flex flex-col sm:flex-row gap-4 pt-6">
-            <button type="button" onClick={onBack} className="flex-1 px-8 py-4 border-2 border-slate-100 rounded-2xl text-slate-500 font-bold hover:bg-slate-50 transition-colors">
-              Cancelar
-            </button>
-            <button type="submit" disabled={submitting} className="flex-1 btn-accent py-4 text-lg rounded-2xl">
-              {submitting ? 'Processando...' : 'Confirmar Inscrição'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </motion.div>
-  );
-}
-
-function LoginView({ onSuccess, onCancel }: { onSuccess: () => void, onCancel: () => void }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    
-    setTimeout(() => {
-      const trimmedUser = username.trim().toLowerCase();
-      const trimmedPass = password.trim();
-
-      if (trimmedUser === "admin" && trimmedPass === "sesi123") {
-        localStorage.setItem(AUTH_KEY, 'fake-token');
-        onSuccess();
-      } else {
-        setError('Usuário ou senha incorretos.');
-        setLoading(false);
-      }
-    }, 600);
-  };
-
-  return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="max-w-md mx-auto py-12"
-    >
-      <div className="card p-10 space-y-10 border-b-8 border-accent">
-        <div className="text-center space-y-4">
-          <div className="w-20 h-20 bg-accent rounded-3xl flex items-center justify-center text-slate-900 mx-auto shadow-lg">
-            <LayoutDashboard size={40} />
-          </div>
-          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Área Administrativa</h2>
-          <p className="text-slate-400 font-medium">Acesso restrito para organizadores.</p>
-        </div>
-
-        {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-bold flex items-center gap-3 border border-red-100">
-            <AlertCircle size={20} />
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleLogin} className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-slate-700">Usuário</label>
-            <input 
-              required 
-              type="text" 
-              className="input-field py-3" 
-              value={username} 
-              onChange={(e) => setUsername(e.target.value)} 
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-slate-700">Senha</label>
-            <input 
-              required 
-              type="password" 
-              className="input-field py-3" 
-              value={password} 
-              onChange={(e) => setPassword(e.target.value)} 
-            />
-          </div>
-          <div className="flex flex-col gap-4 pt-4">
-            <button type="submit" disabled={loading} className="btn-accent w-full py-4 text-lg rounded-2xl">
-              {loading ? 'Entrando...' : 'Entrar no Painel'}
-            </button>
-            <button type="button" onClick={onCancel} className="text-sm font-bold text-slate-400 hover:text-primary transition-colors">
-              Voltar para o site
-            </button>
-          </div>
-        </form>
-      </div>
-    </motion.div>
-  );
-}
-
-// --- Admin Dashboard ---
-
-function AdminDashboard({ events, settings, onRefresh }: { events: Event[], settings: AppSettings, onRefresh: () => void }) {
-  const [activeTab, setActiveTab] = useState<'list' | 'create' | 'participants' | 'stats' | 'settings'>('list');
-  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
-  const [participants, setParticipants] = useState<Registration[]>([]);
-  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
-
-  // Settings state
-  const [localSettings, setLocalSettings] = useState<AppSettings>(settings);
-  const [newType, setNewType] = useState('');
-  const [newGrade, setNewGrade] = useState('');
-  const [adminSearchTerm, setAdminSearchTerm] = useState('');
-  const [participantSearchTerm, setParticipantSearchTerm] = useState('');
-
-  useEffect(() => {
-    setLocalSettings(settings);
-  }, [settings]);
-
-  const saveSettings = async (updated: AppSettings) => {
-    try {
-      await api.saveSettings(updated);
-      setLocalSettings(updated);
-      onRefresh();
-    } catch (err) {
-      console.error("Failed to save settings", err);
-    }
-  };
-
-  const toggleFilter = (filter: keyof AppSettings['visibleFilters']) => {
-    const updated = {
-      ...localSettings,
-      visibleFilters: {
-        ...localSettings.visibleFilters,
-        [filter]: !localSettings.visibleFilters[filter]
-      }
-    };
-    saveSettings(updated);
-  };
-
-  const addType = () => {
-    if (!newType.trim()) return;
-    if (localSettings.eventTypes.includes(newType.trim())) return;
-    const updated = {
-      ...localSettings,
-      eventTypes: [...localSettings.eventTypes, newType.trim()]
-    };
-    saveSettings(updated);
-    setNewType('');
-  };
-
-  const removeType = (type: string) => {
-    const updated = {
-      ...localSettings,
-      eventTypes: localSettings.eventTypes.filter(t => t !== type)
-    };
-    saveSettings(updated);
-  };
-
-  const addGrade = () => {
-    if (!newGrade.trim()) return;
-    if (localSettings.grades.includes(newGrade.trim())) return;
-    const updated = {
-      ...localSettings,
-      grades: [...localSettings.grades, newGrade.trim()]
-    };
-    saveSettings(updated);
-    setNewGrade('');
-  };
-
-  const removeGrade = (grade: string) => {
-    const updated = {
-      ...localSettings,
-      grades: localSettings.grades.filter(g => g !== grade)
-    };
-    saveSettings(updated);
-  };
-
-  const fetchParticipants = async (eventId: string) => {
-    try {
-      const eventRegs = await api.getRegistrations(eventId);
-      setParticipants(eventRegs);
-    } catch (err) {
-      console.error("Failed to fetch participants", err);
-    }
-  };
-
-  const updateRegistrationStatus = async (regId: string, status: 'approved' | 'pending') => {
-    try {
-      await api.updateRegistrationStatus(regId, status);
-      if (selectedEvent) fetchParticipants(selectedEvent.id);
-      onRefresh();
-    } catch (err) {
-      console.error("Failed to update status", err);
-    }
-  };
-
-  const handleCreateOrUpdate = async (formData: any) => {
-    try {
-      if (editingEvent) {
-        await api.saveEvent({ ...editingEvent, ...formData });
-      } else {
-        const newEvent = {
-          ...formData,
-          id: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
-          currentRegistrations: 0
-        };
-        await api.saveEvent(newEvent);
-      }
-      
-      onRefresh();
-      setActiveTab('list');
-      setEditingEvent(null);
-    } catch (err) {
-      console.error("Failed to save event", err);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await api.deleteEvent(id);
-      onRefresh();
-      setDeletingId(null);
-    } catch (err) {
-      console.error("Failed to delete event", err);
-    }
-  };
-
-  const exportExcel = (event: Event, data: Registration[]) => {
-    const rows = data.map(r => ({
-      'Data Inscrição': format(parseISO(r.createdAt), 'dd/MM/yyyy HH:mm'),
-      ...r.formData
-    }));
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Participantes");
-    XLSX.writeFile(workbook, `participantes_${event.name.replace(/\s+/g, '_')}.xlsx`);
-  };
-
-  const exportPDF = (event: Event, data: Registration[]) => {
-    const doc = new jsPDF();
-    doc.text(`Participantes: ${event.name}`, 14, 15);
-    doc.setFontSize(10);
-    doc.text(`Data: ${format(parseISO(event.date), 'dd/MM/yyyy')}`, 14, 22);
-
-    if (data.length === 0) {
-      doc.text("Nenhum participante inscrito.", 14, 30);
-    } else {
-      const headers = Object.keys(data[0].formData);
-      const body = data.map(r => Object.values(r.formData));
-      (doc as any).autoTable({
-        head: [headers],
-        body: body,
-        startY: 30,
-      });
-    }
-
-    doc.save(`participantes_${event.name.replace(/\s+/g, '_')}.pdf`);
-  };
-
-  const copyToClipboard = (data: Registration[]) => {
-    if (data.length === 0) {
-      setCopyStatus('Nenhum dado para copiar.');
-      setTimeout(() => setCopyStatus(null), 3000);
-      return;
-    }
-    const headers = Object.keys(data[0].formData).join('\t');
-    const text = data.map(r => Object.values(r.formData).join('\t')).join('\n');
-    navigator.clipboard.writeText(headers + '\n' + text);
-    setCopyStatus('Lista copiada com sucesso!');
-    setTimeout(() => setCopyStatus(null), 3000);
-  };
-
-  return (
-    <div className="space-y-10">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-        <div className="space-y-1">
-          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Painel de Gestão</h2>
-          <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">Organização de Eventos SESI</p>
-          {copyStatus && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-              className="text-xs font-bold text-primary bg-blue-50 px-3 py-1 rounded-full w-fit mt-2"
-            >
-              {copyStatus}
-            </motion.div>
-          )}
-        </div>
-        <button 
-          onClick={() => { setEditingEvent(null); setActiveTab('create'); }}
-          className="btn-accent flex items-center justify-center gap-2 py-3 px-6 rounded-xl shadow-lg hover:shadow-accent/20"
-        >
-          <Plus size={20} />
-          Criar Novo Evento
-        </button>
-      </div>
-
-      <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl w-fit">
-        <button 
-          onClick={() => setActiveTab('list')}
-          className={`px-6 py-2.5 text-sm font-black rounded-xl transition-all ${activeTab === 'list' ? 'bg-white text-primary shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Lista de Eventos
-        </button>
-        <button 
-          onClick={() => setActiveTab('stats')}
-          className={`px-6 py-2.5 text-sm font-black rounded-xl transition-all ${activeTab === 'stats' ? 'bg-white text-primary shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Estatísticas
-        </button>
-        <button 
-          onClick={() => setActiveTab('settings')}
-          className={`px-6 py-2.5 text-sm font-black rounded-xl transition-all ${activeTab === 'settings' ? 'bg-white text-primary shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Configurações
-        </button>
-        {(activeTab === 'participants' || activeTab === 'create') && (
-          <button className="px-6 py-2.5 text-sm font-black rounded-xl bg-white text-primary shadow-sm">
-            {activeTab === 'participants' ? 'Participantes' : (editingEvent ? 'Editar' : 'Novo')}
-          </button>
-        )}
-      </div>
-
-      <AnimatePresence mode="wait">
-        {activeTab === 'settings' && (
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* User View */}
+        {view === 'user' && !isRegistering && (
           <motion.div 
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="space-y-8"
-          >
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Filter Visibility */}
-              <div className="card p-8 space-y-6">
-                <h3 className="text-lg font-black text-slate-900 flex items-center gap-3">
-                  <Filter size={20} className="text-accent" />
-                  Filtros da Página Inicial
-                </h3>
-                <div className="space-y-4">
-                  {[
-                    { id: 'search', label: 'Barra de Busca' },
-                    { id: 'grade', label: 'Filtro de Série (Dropdown)' },
-                    { id: 'type', label: 'Filtro de Tipo' },
-                    { id: 'quickGrades', label: 'Botões Rápidos de Série' },
-                  ].map((f) => (
-                    <label key={f.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl cursor-pointer hover:bg-slate-100 transition-colors">
-                      <span className="font-bold text-slate-700">{f.label}</span>
-                      <div className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          className="sr-only peer"
-                          checked={localSettings.visibleFilters[f.id as keyof AppSettings['visibleFilters']]}
-                          onChange={() => toggleFilter(f.id as keyof AppSettings['visibleFilters'])}
-                        />
-                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Event Types */}
-              <div className="card p-8 space-y-6">
-                <h3 className="text-lg font-black text-slate-900 flex items-center gap-3">
-                  <Star size={20} className="text-accent" />
-                  Tipos de Eventos
-                </h3>
-                <div className="space-y-4">
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="Novo tipo..." 
-                      className="input-field py-2"
-                      value={newType}
-                      onChange={(e) => setNewType(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && addType()}
-                    />
-                    <button onClick={addType} className="btn-accent p-2 rounded-xl">
-                      <Plus size={20} />
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {localSettings.eventTypes.map(type => (
-                      <span key={type} className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg font-bold text-xs">
-                        {type}
-                        <button onClick={() => removeType(type)} className="text-slate-400 hover:text-red-500">
-                          <X size={14} />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Grades */}
-              <div className="card p-8 space-y-6">
-                <h3 className="text-lg font-black text-slate-900 flex items-center gap-3">
-                  <Users size={20} className="text-accent" />
-                  Séries / Anos
-                </h3>
-                <div className="space-y-4">
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="Nova série..." 
-                      className="input-field py-2"
-                      value={newGrade}
-                      onChange={(e) => setNewGrade(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && addGrade()}
-                    />
-                    <button onClick={addGrade} className="btn-accent p-2 rounded-xl">
-                      <Plus size={20} />
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {localSettings.grades.map(grade => (
-                      <span key={grade} className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg font-bold text-xs">
-                        {grade}
-                        <button onClick={() => removeGrade(grade)} className="text-slate-400 hover:text-red-500">
-                          <X size={14} />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {activeTab === 'list' && (
-          <motion.div 
-            key="list"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
           >
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-              <input 
-                type="text" 
-                placeholder="Pesquisar eventos por nome ou tipo..." 
-                className="input-field pl-12 py-3 bg-white shadow-sm"
-                value={adminSearchTerm}
-                onChange={(e) => setAdminSearchTerm(e.target.value)}
-              />
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">Próximos Eventos</h2>
+                <p className="text-slate-500">Confira as atividades disponíveis e garanta sua vaga.</p>
+              </div>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input 
+                  type="text" 
+                  placeholder="Buscar eventos..."
+                  className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl w-full md:w-64 focus:ring-2 focus:ring-[#004a99] focus:border-transparent outline-none"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-6">
-              {events.filter(e => 
-                e.name.toLowerCase().includes(adminSearchTerm.toLowerCase()) || 
-                e.type.toLowerCase().includes(adminSearchTerm.toLowerCase())
-              ).map(event => (
-                <div key={event.id} className="card p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:border-accent transition-all">
-                <div className="flex items-center gap-6">
-                  <div className="w-16 h-16 bg-slate-50 rounded-2xl flex flex-col items-center justify-center text-primary border border-slate-100">
-                    <span className="text-[10px] font-black uppercase tracking-widest">{format(parseISO(event.date), 'MMM', { locale: ptBR })}</span>
-                    <span className="text-xl font-black leading-none">{format(parseISO(event.date), 'dd')}</span>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-black text-slate-900 text-lg">{event.name}</h3>
-                      <Badge variant="accent">{event.type}</Badge>
-                    </div>
-                    <div className="flex items-center gap-4 text-sm font-bold text-slate-400">
-                      <span className="flex items-center gap-1"><Clock size={14} /> {event.startTime}</span>
-                      <span className="flex items-center gap-1"><Users size={14} /> {event.currentRegistrations} / {event.maxCapacity} inscritos</span>
-                      {event.allowedGrades && event.allowedGrades.length > 0 && (
-                        <span className="text-accent text-[10px] uppercase tracking-tighter">Restrito: {event.allowedGrades.join(', ')}</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-100">
-                  <button 
-                    onClick={() => { setSelectedEvent(event); fetchParticipants(event.id); setActiveTab('participants'); }}
-                    className="flex items-center gap-2 px-4 py-2 text-slate-600 font-bold hover:text-primary transition-all text-sm"
-                    title="Ver participantes"
-                  >
-                    <Users size={18} />
-                    <span className="hidden sm:inline">Inscritos</span>
-                  </button>
-                  <div className="w-[1px] h-6 bg-slate-200"></div>
-                  {deletingId === event.id ? (
-                    <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-2">
-                      <button 
-                        onClick={() => handleDelete(event.id)}
-                        className="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600 transition-colors"
-                      >
-                        Confirmar
-                      </button>
-                      <button 
-                        onClick={() => setDeletingId(null)}
-                        className="px-3 py-1 bg-slate-200 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-300 transition-colors"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <button 
-                        onClick={() => { setEditingEvent(event); setActiveTab('create'); }}
-                        className="p-2 text-slate-400 hover:text-blue-600 transition-all"
-                        title="Editar"
-                      >
-                        <Edit size={20} />
-                      </button>
-                      <button 
-                        onClick={() => setDeletingId(event.id)}
-                        className="p-2 text-slate-400 hover:text-red-500 transition-all"
-                        title="Excluir"
-                      >
-                        <Trash2 size={20} />
-                      </button>
-                    </>
-                  )}
-                </div>
+            {loading ? (
+              <div className="flex justify-center py-20">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#004a99]"></div>
               </div>
-            ))}
-          </div>
-            {events.length === 0 && (
-              <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200">
-                <p className="text-slate-400 font-bold">Nenhum evento cadastrado.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {events
+                  .filter(e => {
+                    const matchesSearch = e.name.toLowerCase().includes(searchTerm.toLowerCase());
+                    const hasSpots = !isEventFull(e);
+                    const isWithinDeadline = !isDeadlinePassed(e);
+                    return matchesSearch && hasSpots && isWithinDeadline;
+                  })
+                  .map(event => {
+                    const full = isEventFull(event);
+                    const closed = isDeadlinePassed(event);
+                    return (
+                      <motion.div 
+                        key={event.id}
+                        whileHover={{ y: -4 }}
+                        className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col"
+                      >
+                        <div className="p-6 flex-1">
+                          <div className="flex justify-between items-start mb-4">
+                            <Badge variant={event.type === 'Oficina' ? 'warning' : 'default'}>
+                              {event.category_name ? `${event.category_name}${event.subcategory_name ? ` · ${event.subcategory_name}` : ''}` : event.type}
+                            </Badge>
+                            <div className="flex gap-1.5">
+                              {event.is_paid === 1 ? (
+                                <Badge variant="danger">Pago</Badge>
+                              ) : (
+                                <Badge variant="success">Gratuito</Badge>
+                              )}
+                              {full && <Badge variant="danger">LOTADO</Badge>}
+                              {!full && closed && <Badge variant="danger">ENCERRADO</Badge>}
+                            </div>
+                          </div>
+                          <h3 className="text-xl font-bold mb-2 text-slate-800">{event.name}</h3>
+                          <p className="text-slate-500 text-sm line-clamp-2 mb-4">{event.description}</p>
+                          
+                          <div className="space-y-2 text-sm text-slate-600">
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-4 h-4 text-[#004a99]" />
+                              <span>{new Date(event.date).toLocaleDateString('pt-BR')}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Clock className="w-4 h-4 text-[#004a99]" />
+                              <span>{event.time}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Users className="w-4 h-4 text-[#004a99]" />
+                              <span>{event.max_vagas - event.current_registrations} vagas restantes</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mt-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                              <AlertCircle className="w-3.5 h-3.5 text-[#004a99]" />
+                              <span>Público: {formatYears(event.years_allowed)}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="p-4 bg-slate-50 border-t border-slate-100">
+                          <button 
+                            disabled={full || closed}
+                            onClick={() => startRegistration(event)}
+                            className={`w-full py-2.5 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${full || closed ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#fff200] text-[#004a99] hover:bg-[#ffe600] shadow-sm'}`}
+                          >
+                            {full ? 'Vagas Esgotadas' : closed ? 'Inscrições Encerradas' : 'Inscrever-se'}
+                            {!full && !closed && <ChevronRight className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
               </div>
             )}
           </motion.div>
         )}
 
-        {activeTab === 'create' && (
+        {/* Registration Form */}
+        {isRegistering && selectedEvent && (
           <motion.div 
-            key="create"
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="max-w-2xl mx-auto bg-white sm:rounded-3xl shadow-xl border-x border-b sm:border border-slate-200 overflow-hidden"
           >
-            <EventForm 
-              initialData={editingEvent} 
-              settings={localSettings}
-              onSubmit={handleCreateOrUpdate} 
-              onCancel={() => { setActiveTab('list'); setEditingEvent(null); }} 
-            />
-          </motion.div>
-        )}
-
-        {activeTab === 'stats' && (
-          <motion.div 
-            key="stats"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="grid grid-cols-1 md:grid-cols-3 gap-8"
-          >
-            <div className="card p-8 space-y-4">
-              <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-primary">
-                <TrendingUp size={24} />
-              </div>
-              <div>
-                <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Total de Eventos</p>
-                <p className="text-4xl font-black text-slate-900">{events.length}</p>
-              </div>
+            <div className="bg-[#004a99] p-6 sm:p-8 text-white relative">
+              <button 
+                onClick={() => setIsRegistering(false)}
+                className="absolute top-4 right-4 sm:top-6 sm:right-6 p-2 hover:bg-white/10 rounded-full transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+              <h2 className="text-2xl sm:text-3xl font-bold mb-2">Inscrição</h2>
+              <p className="opacity-80 text-sm sm:text-base">{selectedEvent.name}</p>
             </div>
-            <div className="card p-8 space-y-4">
-              <div className="w-12 h-12 bg-green-50 rounded-2xl flex items-center justify-center text-green-600">
-                <Users size={24} />
-              </div>
-              <div>
-                <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Total de Inscritos</p>
-                <p className="text-4xl font-black text-slate-900">
-                  {events.reduce((acc, e) => acc + e.currentRegistrations, 0)}
-                </p>
-              </div>
-            </div>
-            <div className="card p-8 space-y-4">
-              <div className="w-12 h-12 bg-yellow-50 rounded-2xl flex items-center justify-center text-yellow-600">
-                <PieChart size={24} />
-              </div>
-              <div>
-                <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Ocupação Média</p>
-                <p className="text-4xl font-black text-slate-900">
-                  {events.length > 0 
-                    ? Math.round((events.reduce((acc, e) => acc + (e.currentRegistrations / e.maxCapacity), 0) / events.length) * 100)
-                    : 0}%
-                </p>
-              </div>
-            </div>
-
-            <div className="md:col-span-3 card p-8 space-y-6">
-              <h3 className="font-black text-slate-900 text-xl">Eventos mais populares</h3>
-              <div className="space-y-4">
-                {[...events].sort((a, b) => b.currentRegistrations - a.currentRegistrations).slice(0, 5).map(event => (
-                  <div key={event.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-primary font-black shadow-sm">
-                        {event.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="font-bold text-slate-900">{event.name}</p>
-                        <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">{event.type}</p>
-                      </div>
+            
+            <form onSubmit={handleRegister} className="p-6 sm:p-8 space-y-6">
+              {/* Avisos Importantes */}
+              <div className="space-y-3">
+                {selectedEvent.years_allowed && selectedEvent.years_allowed.trim() !== '' && (
+                  <div className="bg-blue-50 border border-blue-200 text-[#004a99] p-4 rounded-xl flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold text-sm">Restrição de Ano Escolar</h4>
+                      <p className="text-xs mt-0.5">Este evento é exclusivo para alunos do: <strong>{formatYears(selectedEvent.years_allowed)}</strong>.</p>
                     </div>
-                    <div className="text-right">
-                      <p className="font-black text-slate-900">{event.currentRegistrations} / {event.maxCapacity}</p>
-                      <div className="w-32 h-2 bg-slate-200 rounded-full mt-1 overflow-hidden">
-                        <div 
-                          className="h-full bg-accent" 
-                          style={{ width: `${(event.currentRegistrations / event.maxCapacity) * 100}%` }}
-                        ></div>
-                      </div>
+                  </div>
+                )}
+
+                {selectedEvent.is_paid === 1 && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-xl flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-amber-600" />
+                    <div>
+                      <h4 className="font-bold text-sm text-amber-900">Atividade Paga</h4>
+                      <p className="text-xs mt-0.5">Esta atividade é paga. Ao se inscrever, você precisará confirmar a ciência do valor associado.</p>
                     </div>
+                  </div>
+                )}
+
+                {selectedEvent.limitar_vagas_por_ano === 1 && selectedEvent.vagas_por_ano !== undefined && (
+                  <div className="bg-blue-50 border border-blue-200 text-[#004a99] p-4 rounded-xl flex items-start gap-3">
+                    <Users className="w-5 h-5 shrink-0 mt-0.5 text-[#004a99]" />
+                    <div>
+                      <h4 className="font-bold text-sm">Limite de Vagas por Ano</h4>
+                      <p className="text-xs mt-0.5">Há um limite de <strong>{selectedEvent.vagas_por_ano} vagas</strong> para estudantes de cada ano escolar individualmente.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-6">
+                {selectedEvent.fields?.map((field) => (
+                  <div key={field.id} className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700 flex items-center gap-1">
+                      {field.field_label}
+                      {field.is_required && <span className="text-rose-500">*</span>}
+                    </label>
+                    
+                    {field.field_name === 'nome' ? (
+                      <div className="relative">
+                        <input 
+                          type="text"
+                          required={field.is_required}
+                          value={regData.nome || ''}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none transition-all"
+                          placeholder="Comece a digitar para pesquisar..."
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRegData({ ...regData, nome: val });
+                            setShowSuggestions(val.trim().length > 1);
+                          }}
+                          onFocus={() => {
+                            if ((regData.nome || '').trim().length > 1) {
+                              setShowSuggestions(true);
+                            }
+                          }}
+                        />
+                        {showSuggestions && students.filter(s => s.name.toLowerCase().includes((regData.nome || '').toLowerCase())).length > 0 && (
+                          <div className="absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 divide-y divide-slate-100">
+                            {students
+                              .filter(s => s.name.toLowerCase().includes((regData.nome || '').toLowerCase()))
+                              .map(s => (
+                                <button
+                                  key={s.id}
+                                  type="button"
+                                  onClick={() => onSelectStudent(s)}
+                                  className="w-full px-4 py-3 text-left hover:bg-slate-50 text-sm font-medium flex justify-between items-center transition-colors"
+                                >
+                                  <span className="text-slate-800">{s.name}</span>
+                                  <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{s.grade}</span>
+                                </button>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : field.field_name === 'sobrenome' ? (
+                      <input 
+                        type="text"
+                        required={field.is_required}
+                        value={regData.sobrenome || ''}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none transition-all"
+                        onChange={(e) => setRegData({ ...regData, sobrenome: e.target.value })}
+                      />
+                    ) : field.field_name === 'ano_escolar' ? (
+                      <select 
+                        required={field.is_required}
+                        value={regData.ano_escolar || ''}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none transition-all"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setRegData({ ...regData, ano_escolar: val });
+                          checkEligibility(val);
+                        }}
+                      >
+                        <option value="">Selecione...</option>
+                        {field.options?.split(',').map(opt => (
+                          <option key={opt} value={opt.trim()}>{opt.trim()}</option>
+                        ))}
+                      </select>
+                    ) : field.field_name === 'turma_letra' ? (
+                      <select 
+                        required={field.is_required}
+                        value={regData.turma_letra || ''}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none transition-all"
+                        onChange={(e) => setRegData({ ...regData, turma_letra: e.target.value })}
+                      >
+                        <option value="">Selecione...</option>
+                        {field.options?.split(',').map(opt => (
+                          <option key={opt} value={opt.trim()}>{opt.trim()}</option>
+                        ))}
+                      </select>
+                    ) : field.field_type === 'text' ? (
+                      <input 
+                        type="text"
+                        required={field.is_required}
+                        value={regData[field.field_name] || ''}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none transition-all"
+                        onChange={(e) => setRegData({ ...regData, [field.field_name]: e.target.value })}
+                      />
+                    ) : field.field_type === 'textarea' ? (
+                      <textarea 
+                        required={field.is_required}
+                        rows={3}
+                        value={regData[field.field_name] || ''}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none transition-all"
+                        onChange={(e) => setRegData({ ...regData, [field.field_name]: e.target.value })}
+                      />
+                    ) : field.field_type === 'select' ? (
+                      <select 
+                        required={field.is_required}
+                        value={regData[field.field_name] || ''}
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none transition-all"
+                        onChange={(e) => setRegData({ ...regData, [field.field_name]: e.target.value })}
+                      >
+                        <option value="">Selecione...</option>
+                        {field.options?.split(',').map(opt => (
+                          <option key={opt} value={opt.trim()}>{opt.trim()}</option>
+                        ))}
+                      </select>
+                    ) : field.field_type === 'radio' ? (
+                      <div className="flex flex-wrap gap-4 pt-2">
+                        {field.options?.split(',').map(opt => (
+                          <label key={opt} className="flex items-center gap-2 cursor-pointer">
+                            <input 
+                              type="radio" 
+                              name={field.field_name}
+                              required={field.is_required}
+                              checked={regData[field.field_name] === opt.trim()}
+                              value={opt.trim()}
+                              className="w-4 h-4 text-[#004a99] focus:ring-[#004a99]"
+                              onChange={(e) => setRegData({ ...regData, [field.field_name]: e.target.value })}
+                            />
+                            <span className="text-sm text-slate-600">{opt.trim()}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
-            </div>
+
+              {/* Checkbox de Confirmação de Evento Pago e Erros de Validação */}
+              <div className="pt-4 space-y-4">
+                {selectedEvent.is_paid === 1 && (
+                  <label className="flex items-start gap-3 cursor-pointer p-4 bg-amber-50/50 border border-amber-200 rounded-2xl hover:bg-amber-50 transition-all select-none">
+                    <input 
+                      type="checkbox" 
+                      required
+                      checked={paidChecked}
+                      onChange={(e) => setPaidChecked(e.target.checked)}
+                      className="w-5 h-5 mt-0.5 text-amber-600 border-amber-300 rounded focus:ring-amber-500"
+                    />
+                    <span className="text-sm font-semibold text-amber-900">
+                      Estou ciente de que esta atividade é paga e confirmo minha concordância com os custos adicionais.
+                    </span>
+                  </label>
+                )}
+
+                {registrationError && (
+                  <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl flex items-center gap-3">
+                    <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                    <span className="text-sm font-bold">{registrationError}</span>
+                  </div>
+                )}
+
+                <button 
+                  type="submit"
+                  disabled={!!registrationError || (selectedEvent.is_paid === 1 && !paidChecked)}
+                  className={`w-full py-4 rounded-2xl font-black text-lg shadow-lg transition-all active:scale-95 ${
+                    !!registrationError || (selectedEvent.is_paid === 1 && !paidChecked)
+                      ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                      : 'bg-[#fff200] text-[#004a99] hover:bg-[#ffe600] shadow-yellow-200'
+                  }`}
+                >
+                  Confirmar Inscrição
+                </button>
+                <p className="text-center text-xs text-slate-400 mt-2">
+                  Ao clicar em confirmar, você concorda com as diretrizes do portal de eventos.
+                </p>
+              </div>
+            </form>
           </motion.div>
         )}
 
-        {activeTab === 'participants' && selectedEvent && (
+        {/* Admin Dashboard */}
+        {view === 'admin' && !isCreating && !isViewingRegs && (
           <motion.div 
-            key="participants"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="space-y-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="max-w-5xl mx-auto space-y-8"
           >
-            <div className="flex flex-col sm:flex-row justify-between items-center gap-6">
-               <div className="flex items-center gap-4">
-                 <button onClick={() => setActiveTab('list')} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
-                   <ArrowLeft size={20} />
-                 </button>
-                 <div>
-                   <h3 className="text-xl font-black text-slate-900">{selectedEvent.name}</h3>
-                   <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">{participants.length} participantes confirmados</p>
-                 </div>
-               </div>
-               <div className="flex flex-wrap gap-3">
-                <div className="relative mr-2">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                  <input 
-                    type="text" 
-                    placeholder="Filtrar inscritos..." 
-                    className="input-field pl-10 py-2 text-sm bg-white border-slate-200 w-48 sm:w-64"
-                    value={participantSearchTerm}
-                    onChange={(e) => setParticipantSearchTerm(e.target.value)}
-                  />
+            {/* Header com Abas */}
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-200 pb-4">
+              <div>
+                <h2 className="text-3xl font-black text-slate-800 tracking-tight">Gestão Pedagógica</h2>
+                <p className="text-slate-500 text-sm mt-1">Portal administrativo do Colégio SESI Internacional.</p>
+                
+                {/* Abas */}
+                <div className="flex gap-6 mt-6">
+                  <button 
+                    onClick={() => setAdminTab('events')} 
+                    className={`pb-2 font-bold text-sm border-b-2 transition-all ${adminTab === 'events' ? 'border-[#004a99] text-[#004a99]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                  >
+                    Eventos
+                  </button>
+                  <button 
+                    onClick={() => setAdminTab('students')} 
+                    className={`pb-2 font-bold text-sm border-b-2 transition-all ${adminTab === 'students' ? 'border-[#004a99] text-[#004a99]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                  >
+                    Gestão de Alunos
+                  </button>
+                  <button 
+                    onClick={() => setAdminTab('categories')} 
+                    className={`pb-2 font-bold text-sm border-b-2 transition-all ${adminTab === 'categories' ? 'border-[#004a99] text-[#004a99]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                  >
+                    Categorias e Tipos
+                  </button>
                 </div>
+              </div>
+
+              {/* Botões do Topo Dinâmicos */}
+              <div className="flex gap-3 shrink-0">
+                {adminTab === 'events' && (
+                  <button 
+                    onClick={() => {
+                      resetNewEvent();
+                      setIsCreating(true);
+                    }}
+                    className="bg-[#004a99] text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-[#003d80] transition-all shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Novo Evento
+                  </button>
+                )}
+                {adminTab === 'students' && (
+                  <>
+                    <button 
+                      onClick={() => setShowPasteStudentsModal(true)}
+                      className="bg-slate-100 text-slate-700 px-5 py-2.5 rounded-xl font-bold hover:bg-slate-200 transition-all border border-slate-200"
+                    >
+                      Colar Lista
+                    </button>
+                    <button 
+                      onClick={exportStudentsToCSV}
+                      className="bg-slate-100 text-slate-700 px-5 py-2.5 rounded-xl font-bold hover:bg-slate-200 transition-all border border-slate-200 flex items-center gap-1.5"
+                    >
+                      <Download className="w-4 h-4" />
+                      Exportar Excel
+                    </button>
+                    <button 
+                      onClick={() => setShowAddStudentModal(true)}
+                      className="bg-[#fff200] text-[#004a99] px-5 py-2.5 rounded-xl font-bold hover:bg-[#ffe600] transition-all shadow-sm"
+                    >
+                      Novo Aluno
+                    </button>
+                  </>
+                )}
+                {adminTab === 'categories' && (
+                  <button 
+                    onClick={() => setShowAddCategoryModal(true)}
+                    className="bg-[#004a99] text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 hover:bg-[#003d80] transition-all shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Nova Categoria
+                  </button>
+                )}
                 <button 
-                  onClick={() => copyToClipboard(participants)}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-white border-2 border-slate-100 text-slate-600 rounded-xl font-bold hover:border-accent transition-all text-sm"
+                  onClick={() => {
+                    setIsAdminAuthenticated(false);
+                    setView('user');
+                  }}
+                  className="bg-slate-100 text-slate-600 px-5 py-2.5 rounded-xl font-bold hover:bg-slate-200 transition-all"
                 >
-                  <Copy size={16} />
-                  Copiar
-                </button>
-                <button 
-                  onClick={() => exportExcel(selectedEvent, participants)}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-green-50 text-green-700 rounded-xl font-bold hover:bg-green-100 transition-all text-sm"
-                >
-                  <Download size={16} />
-                  Excel
-                </button>
-                <button 
-                  onClick={() => exportPDF(selectedEvent, participants)}
-                  className="flex items-center gap-2 px-4 py-2.5 bg-red-50 text-red-700 rounded-xl font-bold hover:bg-red-100 transition-all text-sm"
-                >
-                  <FileText size={16} />
-                  PDF
+                  Sair
                 </button>
               </div>
             </div>
 
-            <div className="card overflow-x-auto border-2 border-slate-100">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 border-b-2 border-slate-100">
-                  <tr>
-                    <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Status</th>
-                    <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Data/Hora</th>
-                    {participants.length > 0 && Object.keys(participants[0].formData).map(key => (
-                      <th key={key} className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">{key.replace('_', ' ')}</th>
-                    ))}
-                    {selectedEvent.approvalMode === 'manual' && (
-                      <th className="px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Ações</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {participants.filter(p => 
-                    Object.values(p.formData).some(val => 
-                      String(val).toLowerCase().includes(participantSearchTerm.toLowerCase())
-                    )
-                  ).map(p => (
-                    <tr key={p.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-6 py-4">
-                        <Badge variant={p.status === 'approved' ? 'success' : 'warning'}>
-                          {p.status === 'approved' ? 'Confirmado' : 'Pendente'}
-                        </Badge>
-                      </td>
-                      <td className="px-6 py-4 text-slate-400 font-bold">{format(parseISO(p.createdAt), 'dd/MM HH:mm')}</td>
-                      {Object.values(p.formData).map((val: any, i) => (
-                        <td key={i} className="px-6 py-4 text-slate-900 font-bold">{val}</td>
-                      ))}
-                      {selectedEvent.approvalMode === 'manual' && (
-                        <td className="px-6 py-4">
-                          {p.status === 'pending' ? (
+            {/* Painel 1: Eventos */}
+            {adminTab === 'events' && (
+              <div className="grid grid-cols-1 gap-4">
+                {events.length === 0 ? (
+                  <div className="bg-white rounded-3xl p-12 text-center border border-dashed border-slate-300">
+                    <Calendar className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                    <p className="text-slate-400 font-medium">Nenhum evento cadastrado.</p>
+                  </div>
+                ) : (
+                  events.map(event => {
+                    const full = isEventFull(event);
+                    return (
+                      <motion.div 
+                        key={event.id}
+                        layout
+                        className="bg-white p-5 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex items-center gap-4 w-full sm:w-auto">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${full ? 'bg-rose-50 text-rose-500' : 'bg-blue-50 text-[#004a99]'}`}>
+                            {full ? <Users className="w-6 h-6" /> : <Calendar className="w-6 h-6" />}
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="font-bold text-slate-800 truncate">{event.name}</h3>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 mt-0.5">
+                              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(event.date).toLocaleDateString('pt-BR')}</span>
+                              <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
+                              <span className="font-medium text-slate-500">
+                                {event.category_name ? `${event.category_name}${event.subcategory_name ? ` · ${event.subcategory_name}` : ''}` : event.type}
+                              </span>
+                              <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
+                              <span>Público: {formatYears(event.years_allowed)}</span>
+                              {event.is_paid === 1 && (
+                                <>
+                                  <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
+                                  <span className="text-amber-600 font-bold bg-amber-50 px-1.5 py-0.5 rounded text-[10px]">PAGO</span>
+                                </>
+                              )}
+                              {event.limitar_vagas_por_ano === 1 && (
+                                <>
+                                  <span className="w-1 h-1 bg-slate-200 rounded-full"></span>
+                                  <span className="text-[#004a99] font-bold bg-blue-50 px-1.5 py-0.5 rounded text-[10px]">LIMITE POR ANO: {event.vagas_por_ano}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between sm:justify-end gap-8 w-full sm:w-auto">
+                          <div className="text-right">
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Ocupação</div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm font-black ${full ? 'text-rose-500' : 'text-slate-700'}`}>
+                                {event.current_registrations} / {event.max_vagas}
+                              </span>
+                              <div className="w-16 bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full ${full ? 'bg-rose-500' : 'bg-[#004a99]'}`}
+                                  style={{ width: `${Math.min(100, (event.current_registrations / event.max_vagas) * 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1">
                             <button 
-                              onClick={() => updateRegistrationStatus(p.id, 'approved')}
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                              title="Aprovar"
+                              onClick={async () => {
+                                setSelectedEvent(event);
+                                await fetchRegistrations(event.id);
+                                setIsViewingRegs(true);
+                              }}
+                              className="p-2.5 text-slate-400 hover:text-[#004a99] hover:bg-blue-50 rounded-xl transition-all"
+                              title="Ver Inscritos"
                             >
-                              <CheckCircle2 size={18} />
+                              <Users className="w-5 h-5" />
                             </button>
-                          ) : (
                             <button 
-                              onClick={() => updateRegistrationStatus(p.id, 'pending')}
-                              className="p-2 text-yellow-600 hover:bg-yellow-50 rounded-lg transition-colors"
-                              title="Mover para pendente"
+                              onClick={() => handleEditEvent(event)}
+                              className="p-2.5 text-slate-400 hover:text-[#004a99] hover:bg-slate-50 rounded-xl transition-all"
+                              title="Editar"
                             >
-                              <Clock size={18} />
+                              <Edit className="w-5 h-5" />
                             </button>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {participants.length === 0 && (
-                <div className="text-center py-20">
-                  <Users className="mx-auto text-slate-100 mb-4" size={64} />
-                  <p className="text-slate-400 font-bold">Nenhuma inscrição realizada ainda.</p>
+                            <button 
+                              onClick={() => handleDeleteEvent(event.id)}
+                              className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {/* Painel 2: Alunos */}
+            {adminTab === 'students' && (
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 space-y-6">
+                {/* Filtro e Busca */}
+                <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+                  <div className="relative w-full sm:w-72">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Buscar por nome..."
+                      value={studentSearch}
+                      onChange={(e) => setStudentSearch(e.target.value)}
+                      className="pl-10 pr-4 py-2 border border-slate-200 rounded-xl w-full focus:ring-2 focus:ring-[#004a99] outline-none"
+                    />
+                  </div>
+                  <div className="w-full sm:w-48 flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-400 uppercase shrink-0">Ano:</span>
+                    <select
+                      value={studentGradeFilter}
+                      onChange={(e) => setStudentGradeFilter(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none text-sm"
+                    >
+                      <option value="">Todos</option>
+                      <option value="6° Ano">6° Ano</option>
+                      <option value="7° Ano">7° Ano</option>
+                      <option value="8° Ano">8° Ano</option>
+                      <option value="9° Ano">9° Ano</option>
+                      <option value="1° Ano EM">1° Ano EM</option>
+                      <option value="2° Ano EM">2° Ano EM</option>
+                      <option value="3° Ano EM">3° Ano EM</option>
+                    </select>
+                  </div>
                 </div>
+
+                {/* Lista de Alunos */}
+                <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-400 uppercase">
+                        <th className="px-6 py-3">Nome do Aluno</th>
+                        <th className="px-6 py-3">Ano Escolar</th>
+                        <th className="px-6 py-3 text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-sm">
+                      {students
+                        .filter(s => {
+                          const matchSearch = s.name.toLowerCase().includes(studentSearch.toLowerCase());
+                          const matchGrade = !studentGradeFilter || s.grade === studentGradeFilter;
+                          return matchSearch && matchGrade;
+                        })
+                        .map(s => (
+                          <tr key={s.id} className="hover:bg-slate-50/50">
+                            <td className="px-6 py-3 font-semibold text-slate-800">{s.name}</td>
+                            <td className="px-6 py-3 text-slate-500">{s.grade}</td>
+                            <td className="px-6 py-3 text-right">
+                              <button 
+                                onClick={() => handleDeleteStudent(s.id)}
+                                className="text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      {students.filter(s => {
+                        const matchSearch = s.name.toLowerCase().includes(studentSearch.toLowerCase());
+                        const matchGrade = !studentGradeFilter || s.grade === studentGradeFilter;
+                        return matchSearch && matchGrade;
+                      }).length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-6 py-12 text-center text-slate-400 italic">
+                            Nenhum aluno encontrado para os filtros selecionados.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Painel 3: Categorias e Subcategorias */}
+            {adminTab === 'categories' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {categories.length === 0 ? (
+                  <div className="bg-white rounded-3xl p-12 text-center border border-dashed border-slate-300 md:col-span-2">
+                    <p className="text-slate-400 font-medium">Nenhuma categoria cadastrada.</p>
+                  </div>
+                ) : (
+                  categories.map(cat => (
+                    <div key={cat.id} className="bg-white p-6 rounded-3xl border border-slate-200 space-y-4">
+                      <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                        <h3 className="font-bold text-lg text-slate-800 uppercase tracking-wide">{cat.name}</h3>
+                        <button 
+                          onClick={() => handleDeleteCategory(cat.id)}
+                          className="text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition-colors"
+                          title="Remover Categoria"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Subcategorias / Tipos */}
+                      <div className="space-y-2">
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Tipos / Subcategorias:</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {cat.subcategories.map(sub => (
+                            <span 
+                              key={sub.id} 
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-full text-xs font-bold text-slate-600"
+                            >
+                              {sub.name}
+                              <button 
+                                onClick={() => handleDeleteSubcategory(sub.id)}
+                                className="text-slate-400 hover:text-rose-600"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </span>
+                          ))}
+                          {cat.subcategories.length === 0 && (
+                            <span className="text-xs text-slate-400 italic">Nenhum tipo cadastrado</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Input rápido de adicionar subcategoria */}
+                      <div className="flex gap-2 pt-2">
+                        <input 
+                          type="text" 
+                          placeholder="Novo tipo..."
+                          value={newSubcategoryName[cat.id] || ''}
+                          onChange={(e) => setNewSubcategoryName(prev => ({ ...prev, [cat.id]: e.target.value }))}
+                          className="flex-1 px-3 py-1.5 border border-slate-200 rounded-xl text-xs focus:ring-1 focus:ring-[#004a99] outline-none"
+                        />
+                        <button 
+                          onClick={() => handleAddSubcategory(cat.id)}
+                          className="bg-slate-100 hover:bg-[#004a99] hover:text-white text-slate-600 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border border-slate-200"
+                        >
+                          Adicionar
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* Modal: Novo Aluno */}
+            <AnimatePresence>
+              {showAddStudentModal && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden border border-slate-100 animate-scaleIn"
+                  >
+                    <div className="bg-[#004a99] p-6 text-white flex justify-between items-center">
+                      <h3 className="font-bold text-lg">Novo Aluno</h3>
+                      <button onClick={() => setShowAddStudentModal(false)} className="text-white hover:opacity-80">
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <form onSubmit={handleAddStudent} className="p-6 space-y-4">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Nome Completo</label>
+                        <input 
+                          type="text" 
+                          required 
+                          value={newStudentName}
+                          onChange={(e) => setNewStudentName(e.target.value)}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Ano Escolar</label>
+                        <select 
+                          value={newStudentGrade}
+                          onChange={(e) => setNewStudentGrade(e.target.value)}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                        >
+                          <option value="6° Ano">6° Ano</option>
+                          <option value="7° Ano">7° Ano</option>
+                          <option value="8° Ano">8° Ano</option>
+                          <option value="9° Ano">9° Ano</option>
+                          <option value="1° Ano EM">1° Ano EM</option>
+                          <option value="2° Ano EM">2° Ano EM</option>
+                          <option value="3° Ano EM">3° Ano EM</option>
+                        </select>
+                      </div>
+                      <div className="pt-2 flex gap-3">
+                        <button 
+                          type="button" 
+                          onClick={() => setShowAddStudentModal(false)}
+                          className="flex-1 py-3 border border-slate-200 text-slate-500 rounded-xl font-bold hover:bg-slate-50 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                        <button 
+                          type="submit" 
+                          className="flex-1 py-3 bg-[#004a99] text-white rounded-xl font-bold hover:bg-[#003d80] transition-colors"
+                        >
+                          Cadastrar
+                        </button>
+                      </div>
+                    </form>
+                  </motion.div>
+                </div>
+              )}
+            </AnimatePresence>
+
+            {/* Modal: Colar Lista de Alunos */}
+            <AnimatePresence>
+              {showPasteStudentsModal && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="bg-white rounded-3xl shadow-xl w-full max-w-lg overflow-hidden border border-slate-100 animate-scaleIn"
+                  >
+                    <div className="bg-[#004a99] p-6 text-white flex justify-between items-center">
+                      <h3 className="font-bold text-lg">Colar Lista de Alunos</h3>
+                      <button onClick={() => setShowPasteStudentsModal(false)} className="text-white hover:opacity-80">
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <form onSubmit={handlePasteStudents} className="p-6 space-y-4">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Ano Escolar de Destino</label>
+                        <select 
+                          value={pasteStudentGrade}
+                          onChange={(e) => setPasteStudentGrade(e.target.value)}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                        >
+                          <option value="6° Ano">6° Ano</option>
+                          <option value="7° Ano">7° Ano</option>
+                          <option value="8° Ano">8° Ano</option>
+                          <option value="9° Ano">9° Ano</option>
+                          <option value="1° Ano EM">1° Ano EM</option>
+                          <option value="2° Ano EM">2° Ano EM</option>
+                          <option value="3° Ano EM">3° Ano EM</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Nomes (um por linha)</label>
+                        <textarea 
+                          rows={8}
+                          required
+                          value={pasteStudentNamesText}
+                          placeholder="Exemplo:&#10;Luiz Silva&#10;Maria Santos&#10;Pedro Oliveira"
+                          onChange={(e) => setPasteStudentNamesText(e.target.value)}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none font-mono text-sm shadow-inner"
+                        />
+                      </div>
+                      <div className="pt-2 flex gap-3">
+                        <button 
+                          type="button" 
+                          onClick={() => setShowPasteStudentsModal(false)}
+                          className="flex-1 py-3 border border-slate-200 text-slate-500 rounded-xl font-bold hover:bg-slate-50 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                        <button 
+                          type="submit" 
+                          className="flex-1 py-3 bg-[#004a99] text-white rounded-xl font-bold hover:bg-[#003d80] transition-colors"
+                        >
+                          Importar Lista
+                        </button>
+                      </div>
+                    </form>
+                  </motion.div>
+                </div>
+              )}
+            </AnimatePresence>
+
+            {/* Modal: Nova Categoria */}
+            <AnimatePresence>
+              {showAddCategoryModal && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden border border-slate-100 animate-scaleIn"
+                  >
+                    <div className="bg-[#004a99] p-6 text-white flex justify-between items-center">
+                      <h3 className="font-bold text-lg">Nova Categoria</h3>
+                      <button onClick={() => setShowAddCategoryModal(false)} className="text-white hover:opacity-80">
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <form onSubmit={handleAddCategory} className="p-6 space-y-4">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Nome da Categoria</label>
+                        <input 
+                          type="text" 
+                          required 
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                        />
+                      </div>
+                      <div className="pt-2 flex gap-3">
+                        <button 
+                          type="button" 
+                          onClick={() => setShowAddCategoryModal(false)}
+                          className="flex-1 py-3 border border-slate-200 text-slate-500 rounded-xl font-bold hover:bg-slate-50 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                        <button 
+                          type="submit" 
+                          className="flex-1 py-3 bg-[#004a99] text-white rounded-xl font-bold hover:bg-[#003d80] transition-colors"
+                        >
+                          Criar Categoria
+                        </button>
+                      </div>
+                    </form>
+                  </motion.div>
+                </div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+
+        {/* Create Event Form */}
+        {isCreating && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-4xl mx-auto"
+          >
+            <div className="flex items-center gap-4 mb-8">
+              <button 
+                onClick={() => {
+                  setIsCreating(false);
+                  setEditingEventId(null);
+                }}
+                className="p-2 hover:bg-slate-100 rounded-full transition-all"
+              >
+                <ArrowLeft className="w-6 h-6 text-slate-600" />
+              </button>
+              <div>
+                <h2 className="text-3xl font-black text-slate-800">
+                  {editingEventId ? 'Editar Evento' : 'Novo Evento'}
+                </h2>
+                {editingEventId && <p className="text-slate-500 text-sm">Alterando as informações do evento selecionado.</p>}
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmitEvent} className="space-y-6 sm:space-y-8">
+              {/* Basic Info Section */}
+              <div className="bg-white p-5 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-[#004a99]">
+                  <Settings className="w-5 h-5" />
+                  Informações Básicas
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-sm font-bold text-slate-600">Nome do Evento</label>
+                    <input 
+                      type="text" 
+                      required
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                      value={newEvent.name}
+                      onChange={e => setNewEvent({ ...newEvent, name: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-600">Categoria</label>
+                    <select 
+                      required
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                      value={newEvent.category_id || ''}
+                      onChange={e => {
+                        const catId = e.target.value ? parseInt(e.target.value) : undefined;
+                        const catName = categories.find(c => c.id === catId)?.name || '';
+                        setNewEvent({ 
+                          ...newEvent, 
+                          category_id: catId, 
+                          subcategory_id: undefined,
+                          type: catName
+                        });
+                      }}
+                    >
+                      <option value="">Selecione uma categoria...</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-600">Tipo / Subcategoria</label>
+                    <select 
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none disabled:opacity-60"
+                      value={newEvent.subcategory_id || ''}
+                      disabled={!newEvent.category_id}
+                      onChange={e => {
+                        const subId = e.target.value ? parseInt(e.target.value) : undefined;
+                        setNewEvent({ ...newEvent, subcategory_id: subId });
+                      }}
+                    >
+                      <option value="">Selecione um tipo...</option>
+                      {newEvent.category_id && categories.find(c => c.id === newEvent.category_id)?.subcategories.map(sub => (
+                        <option key={sub.id} value={sub.id}>{sub.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-600">Máximo de Vagas</label>
+                    <input 
+                      type="number" 
+                      required
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                      value={newEvent.max_vagas}
+                      onChange={e => setNewEvent({ ...newEvent, max_vagas: parseInt(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-600">Data do Evento</label>
+                    <input 
+                      type="date" 
+                      required
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                      value={newEvent.date}
+                      onChange={e => setNewEvent({ ...newEvent, date: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-600">Horário</label>
+                    <input 
+                      type="time" 
+                      required
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                      value={newEvent.time}
+                      onChange={e => setNewEvent({ ...newEvent, time: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-600">Data Limite de Inscrição</label>
+                    <input 
+                      type="datetime-local" 
+                      required
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                      value={newEvent.deadline}
+                      onChange={e => setNewEvent({ ...newEvent, deadline: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-sm font-bold text-slate-600">Descrição</label>
+                    <textarea 
+                      rows={3}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#004a99] outline-none"
+                      value={newEvent.description}
+                      onChange={e => setNewEvent({ ...newEvent, description: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Restrictions and Access Section */}
+              <div className="bg-white p-5 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200">
+                <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-[#004a99]">
+                  <LockIcon className="w-5 h-5" />
+                  Restrições e Acesso
+                </h3>
+                
+                <div className="space-y-6">
+                  {/* Allowed Years */}
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+                      <label className="text-sm font-bold text-slate-700">Anos Escolares Permitidos</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button 
+                          type="button"
+                          onClick={() => setNewEvent({ ...newEvent, years_allowed: '6° Ano, 7° Ano, 8° Ano, 9° Ano, 1° Ano EM, 2° Ano EM, 3° Ano EM' })}
+                          className="text-xs bg-slate-100 hover:bg-slate-200 text-[#004a99] px-2.5 py-1.5 rounded-lg font-bold transition-colors"
+                        >
+                          Livre (Todos)
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setNewEvent({ ...newEvent, years_allowed: '6° Ano, 7° Ano, 8° Ano, 9° Ano' })}
+                          className="text-xs bg-slate-100 hover:bg-slate-200 text-[#004a99] px-2.5 py-1.5 rounded-lg font-bold transition-colors"
+                        >
+                          Fund. 2
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setNewEvent({ ...newEvent, years_allowed: '1° Ano EM, 2° Ano EM, 3° Ano EM' })}
+                          className="text-xs bg-slate-100 hover:bg-slate-200 text-[#004a99] px-2.5 py-1.5 rounded-lg font-bold transition-colors"
+                        >
+                          Ensino Médio
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setNewEvent({ ...newEvent, years_allowed: '' })}
+                          className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-500 px-2.5 py-1.5 rounded-lg font-bold transition-colors"
+                        >
+                          Limpar
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-2">
+                      {['6° Ano', '7° Ano', '8° Ano', '9° Ano', '1° Ano EM', '2° Ano EM', '3° Ano EM'].map(year => {
+                        const isSelected = newEvent.years_allowed?.split(',').map(y => y.trim()).includes(year);
+                        return (
+                          <button
+                            key={year}
+                            type="button"
+                            onClick={() => {
+                              const current = newEvent.years_allowed ? newEvent.years_allowed.split(',').map(y => y.trim()).filter(Boolean) : [];
+                              let updated;
+                              if (current.includes(year)) {
+                                updated = current.filter(y => y !== year);
+                              } else {
+                                updated = [...current, year];
+                              }
+                              setNewEvent({ ...newEvent, years_allowed: updated.join(', ') });
+                            }}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
+                              isSelected 
+                                ? 'bg-blue-50 border-[#004a99] text-[#004a99] shadow-sm shadow-blue-50' 
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            {year}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <hr className="border-slate-100" />
+
+                  {/* Options */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200 hover:bg-slate-100/50 transition-all cursor-pointer select-none">
+                      <input 
+                        type="checkbox"
+                        checked={newEvent.is_paid === 1}
+                        onChange={e => setNewEvent({ ...newEvent, is_paid: e.target.checked ? 1 : 0 })}
+                        className="w-5 h-5 mt-0.5 text-[#004a99] border-slate-300 rounded focus:ring-[#004a99]"
+                      />
+                      <div>
+                        <span className="text-sm font-bold text-slate-800 block">Atividade Paga</span>
+                        <span className="text-xs text-slate-400">Exige que o estudante confirme ciência dos custos da atividade antes de se inscrever.</span>
+                      </div>
+                    </label>
+
+                    <div className="flex flex-col gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200 hover:bg-slate-100/50 transition-all select-none">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input 
+                          type="checkbox"
+                          checked={newEvent.limitar_vagas_por_ano === 1}
+                          onChange={e => {
+                            const checked = e.target.checked;
+                            setNewEvent({ 
+                              ...newEvent, 
+                              limitar_vagas_por_ano: checked ? 1 : 0,
+                              vagas_por_ano: checked ? (newEvent.vagas_por_ano || 5) : undefined
+                            });
+                          }}
+                          className="w-5 h-5 mt-0.5 text-[#004a99] border-slate-300 rounded focus:ring-[#004a99]"
+                        />
+                        <div>
+                          <span className="text-sm font-bold text-slate-800 block">Limitar Vagas por Ano</span>
+                          <span className="text-xs text-slate-400">Define um limite máximo de inscritos para cada ano escolar permitido individualmente.</span>
+                        </div>
+                      </label>
+                      {newEvent.limitar_vagas_por_ano === 1 && (
+                        <div className="pl-8 mt-1 space-y-1 w-full animate-in fade-in slide-in-from-top-1 duration-200">
+                          <label className="text-xs font-bold text-slate-600 block">Número de vagas por ano escolar</label>
+                          <input 
+                            type="number" 
+                            min={1}
+                            required
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-[#004a99] text-sm"
+                            value={newEvent.vagas_por_ano || ''}
+                            onChange={e => setNewEvent({ ...newEvent, vagas_por_ano: parseInt(e.target.value) || 0 })}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <label className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200 hover:bg-slate-100/50 transition-all cursor-pointer select-none md:col-span-2">
+                      <input 
+                        type="checkbox"
+                        checked={newEvent.restringir_duplicidade === 1}
+                        onChange={e => setNewEvent({ ...newEvent, restringir_duplicidade: e.target.checked ? 1 : 0 })}
+                        className="w-5 h-5 mt-0.5 text-[#004a99] border-slate-300 rounded focus:ring-[#004a99]"
+                      />
+                      <div>
+                        <span className="text-sm font-bold text-slate-800 block">Restringir Inscrição Única</span>
+                        <span className="text-xs text-slate-400">Impede que o mesmo aluno se inscreva em mais de um evento pertencente a esta Categoria e Tipo.</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Custom Fields Section */}
+              <div className="bg-white p-5 sm:p-8 rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-lg font-bold flex items-center gap-2 text-[#004a99]">
+                    <PlusCircle className="w-5 h-5" />
+                    Campos do Formulário
+                  </h3>
+                  <button 
+                    type="button"
+                    onClick={addField}
+                    className="text-sm font-bold text-[#004a99] hover:underline flex items-center gap-1"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Adicionar
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {newEvent.fields?.map((field, index) => (
+                    <motion.div 
+                      key={index}
+                      layout
+                      className="p-4 bg-slate-50 rounded-xl sm:rounded-2xl border border-slate-200 flex flex-col md:flex-row gap-4 items-start"
+                    >
+                      <div className="pt-2 hidden md:block">
+                        <GripVertical className="w-5 h-5 text-slate-300" />
+                      </div>
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 w-full">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black uppercase text-slate-400">Rótulo (Label)</label>
+                          <input 
+                            type="text" 
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#004a99]"
+                            value={field.field_label}
+                            onChange={e => updateField(index, { field_label: e.target.value, field_name: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black uppercase text-slate-400">Tipo</label>
+                          <select 
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#004a99]"
+                            value={field.field_type}
+                            onChange={e => updateField(index, { field_type: e.target.value as any })}
+                          >
+                            <option value="text">Texto Simples</option>
+                            <option value="textarea">Texto Longo</option>
+                            <option value="select">Seleção (Dropdown)</option>
+                            <option value="radio">Múltipla Escolha</option>
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-4 pt-6">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              checked={field.is_required}
+                              className="w-4 h-4 text-[#004a99] rounded"
+                              onChange={e => updateField(index, { is_required: e.target.checked })}
+                            />
+                            <span className="text-xs font-bold text-slate-600">Obrigatório</span>
+                          </label>
+                          <button 
+                            type="button"
+                            onClick={() => removeField(index)}
+                            className="p-2 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all ml-auto"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        {(field.field_type === 'select' || field.field_type === 'radio') && (
+                          <div className="md:col-span-3 space-y-1">
+                            <label className="text-[10px] font-black uppercase text-slate-400">Opções (separadas por vírgula)</label>
+                            <input 
+                              type="text" 
+                              placeholder="Opção 1, Opção 2, Opção 3"
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#004a99]"
+                              value={field.options || ''}
+                              onChange={e => updateField(index, { options: e.target.value })}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-4">
+                <button 
+                  type="button"
+                  onClick={() => setIsCreating(false)}
+                  className="px-8 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="px-8 py-3 bg-[#004a99] text-white rounded-2xl font-bold hover:bg-[#003d80] transition-all shadow-lg shadow-blue-100"
+                >
+                  {editingEventId ? 'Salvar Alterações' : 'Publicar Evento'}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
+
+        {/* Registrations List View */}
+        {isViewingRegs && selectedEvent && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="space-y-8"
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <button 
+                  onClick={() => setIsViewingRegs(false)}
+                  className="p-2 hover:bg-slate-100 rounded-full transition-all no-print"
+                >
+                  <ArrowLeft className="w-6 h-6 text-slate-600" />
+                </button>
+                <div>
+                  <div className="hidden print:block mb-4">
+                    <h1 className="text-3xl font-black text-[#004a99]">SESI Internacional</h1>
+                    <p className="text-slate-500">Relatório de Inscrições</p>
+                  </div>
+                  <h2 className="text-2xl font-black text-slate-800">{selectedEvent.name}</h2>
+                  <p className="text-slate-500">Lista de inscritos ({registrations.length} total)</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button 
+                  onClick={copyToClipboard}
+                  className="bg-white border border-slate-200 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-slate-50 transition-all"
+                >
+                  <Copy className="w-4 h-4" />
+                  Copiar
+                </button>
+                <button 
+                  onClick={printList}
+                  className="bg-white border border-slate-200 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-slate-50 transition-all"
+                >
+                  <Printer className="w-4 h-4" />
+                  Imprimir / PDF
+                </button>
+                <button 
+                  onClick={exportToCSV}
+                  className="bg-[#004a99] text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-[#003d80] transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                  Excel (CSV)
+                </button>
+              </div>
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Data</th>
+                      {regFields.map(field => (
+                        <th key={field.id} className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          {field.field_label}
+                        </th>
+                      ))}
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right no-print">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {registrations.map(reg => (
+                      <tr key={reg.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-4 text-xs text-slate-500 whitespace-nowrap">
+                          {new Date(reg.registration_date).toLocaleString('pt-BR')}
+                        </td>
+                        {regFields.map(field => (
+                          <td key={field.id} className="px-6 py-4 text-sm text-slate-700">
+                            {reg.data[field.field_name] || '-'}
+                          </td>
+                        ))}
+                        <td className="px-6 py-4 text-sm text-right no-print">
+                          <button 
+                            onClick={() => handleDeleteRegistration(reg.id)}
+                            className="text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition-colors"
+                            title="Remover Inscrição"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {registrations.length === 0 && (
+                      <tr>
+                        <td colSpan={regFields.length + 2} className="px-6 py-20 text-center text-slate-400 italic">
+                          Nenhuma inscrição realizada até o momento.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Mobile Card View */}
+            <div className="md:hidden space-y-4">
+              {registrations.length === 0 ? (
+                <div className="bg-white rounded-2xl p-12 text-center border border-dashed border-slate-300">
+                  <p className="text-slate-400 italic">Nenhuma inscrição realizada.</p>
+                </div>
+              ) : (
+                registrations.map(reg => (
+                  <div key={reg.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+                    <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2">
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-slate-400 block">Data da Inscrição</span>
+                        <span className="text-xs text-slate-500">{new Date(reg.registration_date).toLocaleString('pt-BR')}</span>
+                      </div>
+                      <button 
+                        onClick={() => handleDeleteRegistration(reg.id)}
+                        className="text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition-colors"
+                        title="Remover Inscrição"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      {regFields.map(field => (
+                        <div key={field.id} className="space-y-1">
+                          <span className="text-[10px] font-black uppercase text-slate-400 block">{field.field_label}</span>
+                          <span className="text-sm text-slate-700 font-medium break-words">{reg.data[field.field_name] || '-'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </motion.div>
         )}
+      </main>
+
+      {/* Footer */}
+      <footer className="mt-20 border-t border-slate-200 py-12 bg-white">
+        <div className="max-w-7xl mx-auto px-4 text-center">
+          <div className="flex justify-center mb-6">
+             <div className="bg-[#004a99] p-3 rounded-2xl cursor-pointer hover:scale-110 transition-transform active:scale-95" onClick={handleSwitchToAdmin}>
+                <Calendar className="w-8 h-8 text-[#fff200]" />
+             </div>
+          </div>
+          <p className="text-slate-500 text-sm font-medium">© 2024 Colégio SESI Internacional. Todos os direitos reservados.</p>
+          <div className="mt-4 flex justify-center gap-6 text-xs font-bold text-slate-400 uppercase tracking-widest">
+            <a href="#" className="hover:text-[#004a99]">Privacidade</a>
+            <a href="#" className="hover:text-[#004a99]">Termos</a>
+            <button onClick={handleSwitchToAdmin} className="opacity-0 hover:opacity-100 transition-opacity cursor-default">Admin</button>
+          </div>
+        </div>
+      </footer>
+
+      {/* PIN Verification Modal */}
+      <AnimatePresence>
+        {showPinModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-sm overflow-hidden border border-slate-100"
+            >
+              <div className="p-8 text-center">
+                <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                  <LockIcon className="w-8 h-8 text-slate-400" />
+                </div>
+                
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">Verificação</h2>
+                <p className="text-slate-500 text-sm mb-8">Insira o código de segurança para acessar o painel administrativo.</p>
+
+                <form onSubmit={handlePinSubmit} className="space-y-8">
+                  <div className="flex justify-center gap-3">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div 
+                        key={i}
+                        className={`w-4 h-4 rounded-full border-2 transition-all duration-300 ${
+                          pinInput.length > i 
+                            ? 'bg-emerald-500 border-emerald-500 scale-110' 
+                            : pinError ? 'border-red-500 animate-shake' : 'border-slate-200'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => pinInput.length < 4 && setPinInput(prev => prev + num)}
+                        className="h-16 w-16 rounded-2xl bg-slate-50 text-xl font-bold text-slate-700 hover:bg-slate-100 active:bg-slate-200 transition-colors mx-auto"
+                      >
+                        {num}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setPinInput('')}
+                      className="h-16 w-16 rounded-2xl bg-red-50 text-xs font-bold text-red-500 hover:bg-red-100 mx-auto"
+                    >
+                      Limpar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => pinInput.length < 4 && setPinInput(prev => prev + '0')}
+                      className="h-16 w-16 rounded-2xl bg-slate-50 text-xl font-bold text-slate-700 hover:bg-slate-100 mx-auto"
+                    >
+                      0
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPinInput(prev => prev.slice(0, -1))}
+                      className="h-16 w-16 rounded-2xl bg-slate-50 flex items-center justify-center hover:bg-slate-100 mx-auto"
+                    >
+                      <X className="w-6 h-6 text-slate-400" />
+                    </button>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPinModal(false);
+                        setPinInput('');
+                      }}
+                      className="flex-1 py-4 text-slate-500 font-bold text-sm hover:bg-slate-50 rounded-2xl transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={pinInput.length !== 4}
+                      className={`flex-1 py-4 rounded-2xl font-bold text-sm shadow-lg transition-all ${
+                        pinInput.length === 4 
+                          ? 'bg-emerald-600 text-white shadow-emerald-200 hover:bg-emerald-700' 
+                          : 'bg-slate-100 text-slate-400 shadow-none cursor-not-allowed'
+                      }`}
+                    >
+                      Verificar
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
     </div>
-  );
-}
-
-function EventForm({ initialData, settings, onSubmit, onCancel }: { initialData: Event | null, settings: AppSettings, onSubmit: (data: any) => void, onCancel: () => void }) {
-  const [formData, setFormData] = useState<any>(initialData ? {
-    ...initialData,
-    configFields: initialData.configFields ? JSON.parse(initialData.configFields) : {}
-  } : {
-    name: '',
-    description: '',
-    type: settings.eventTypes[0] || 'Oficina',
-    date: format(new Date(), 'yyyy-MM-dd'),
-    startTime: '08:00',
-    duration: '1h',
-    maxCapacity: 30,
-    location: '',
-    approvalMode: 'automatic',
-    targetAudience: 'alunos',
-    allowedGrades: [],
-    configFields: {
-      studentName: true,
-      studentSurname: true,
-      studentGrade: true,
-      studentClass: true,
-      studentEmail: false,
-      studentPhone: false,
-      studentCpf: false,
-      parentName: false,
-      parentPhone: false,
-      parentEmail: false,
-      parentCpf: false,
-      parentStudentName: false,
-      parentStudentGrade: false,
-      parentStudentClass: false,
-    }
-  });
-
-  const toggleGrade = (grade: string) => {
-    setFormData((prev: any) => {
-      const current = prev.allowedGrades || [];
-      const updated = current.includes(grade)
-        ? current.filter((g: string) => g !== grade)
-        : [...current, grade];
-      return { ...prev, allowedGrades: updated };
-    });
-  };
-
-  const toggleField = (field: keyof EventConfigFields) => {
-    setFormData((prev: any) => ({
-      ...prev,
-      configFields: {
-        ...prev.configFields,
-        [field]: !prev.configFields[field]
-      }
-    }));
-  };
-
-  return (
-    <form onSubmit={(e) => { e.preventDefault(); onSubmit({ ...formData, configFields: JSON.stringify(formData.configFields) }); }} className="card p-10 space-y-10 border-t-8 border-accent">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-        <div className="space-y-8">
-          <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-3">
-            Informações do Evento
-            <div className="h-[2px] flex-1 bg-slate-100"></div>
-          </h3>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Nome do Evento</label>
-              <input required type="text" className="input-field py-3" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Descrição</label>
-              <textarea required className="input-field min-h-[120px] py-3" value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Local (Opcional)</label>
-              <input type="text" className="input-field py-3" value={formData.location} onChange={(e) => setFormData({...formData, location: e.target.value})} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-slate-700">Tipo</label>
-                <select className="input-field py-3" value={formData.type} onChange={(e) => setFormData({...formData, type: e.target.value})}>
-                  {settings.eventTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-slate-700">Público</label>
-                <select className="input-field py-3" value={formData.targetAudience} onChange={(e) => setFormData({...formData, targetAudience: e.target.value})}>
-                  <option value="alunos">Alunos</option>
-                  <option value="responsaveis">Responsáveis</option>
-                  <option value="ambos">Ambos</option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-8">
-          <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-3">
-            Logística e Formulário
-            <div className="h-[2px] flex-1 bg-slate-100"></div>
-          </h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Data</label>
-              <input required type="date" className="input-field py-3" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Início</label>
-              <input required type="time" className="input-field py-3" value={formData.startTime} onChange={(e) => setFormData({...formData, startTime: e.target.value})} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Duração</label>
-              <input required type="text" placeholder="ex: 1h 30min" className="input-field py-3" value={formData.duration} onChange={(e) => setFormData({...formData, duration: e.target.value})} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Vagas</label>
-              <input required type="number" className="input-field py-3" value={formData.maxCapacity} onChange={(e) => setFormData({...formData, maxCapacity: parseInt(e.target.value)})} />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Modo de Inscrição</label>
-              <select className="input-field py-3" value={formData.approvalMode} onChange={(e) => setFormData({...formData, approvalMode: e.target.value})}>
-                <option value="automatic">Automática</option>
-                <option value="manual">Com Aprovação Manual</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-6">
-            <div className="space-y-4">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Campos da Inscrição (Aluno)</p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                {[
-                  { id: 'studentName', label: 'Nome' },
-                  { id: 'studentSurname', label: 'Sobrenome' },
-                  { id: 'studentGrade', label: 'Série' },
-                  { id: 'studentClass', label: 'Turma' },
-                  { id: 'studentEmail', label: 'Email' },
-                  { id: 'studentPhone', label: 'Telefone' },
-                  { id: 'studentCpf', label: 'CPF/RG' },
-                ].map((field) => (
-                  <label key={field.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white cursor-pointer transition-colors">
-                    <input 
-                      type="checkbox" 
-                      className="w-4 h-4 rounded border-slate-300 text-accent focus:ring-accent"
-                      checked={formData.configFields[field.id as keyof EventConfigFields]} 
-                      onChange={() => toggleField(field.id as keyof EventConfigFields)} 
-                    />
-                    <span className="text-xs font-bold text-slate-600">{field.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-4 pt-4 border-t border-slate-200">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Campos da Inscrição (Responsável)</p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                {[
-                  { id: 'parentName', label: 'Nome Responsável' },
-                  { id: 'parentPhone', label: 'Telefone' },
-                  { id: 'parentEmail', label: 'Email' },
-                  { id: 'parentCpf', label: 'CPF/RG' },
-                  { id: 'parentStudentName', label: 'Nome do Aluno' },
-                  { id: 'parentStudentGrade', label: 'Série do Aluno' },
-                  { id: 'parentStudentClass', label: 'Turma do Aluno' },
-                ].map((field) => (
-                  <label key={field.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white cursor-pointer transition-colors">
-                    <input 
-                      type="checkbox" 
-                      className="w-4 h-4 rounded border-slate-300 text-accent focus:ring-accent"
-                      checked={formData.configFields[field.id as keyof EventConfigFields]} 
-                      onChange={() => toggleField(field.id as keyof EventConfigFields)} 
-                    />
-                    <span className="text-xs font-bold text-slate-600">{field.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-4">
-            <div className="flex justify-between items-center">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Restrição de Séries</p>
-              <span className="text-[9px] font-bold text-slate-400 italic">Vazio = Todas as séries permitidas</span>
-            </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-              {settings.grades.map((grade) => (
-                <label key={grade} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white cursor-pointer transition-colors">
-                  <input 
-                    type="checkbox" 
-                    className="w-4 h-4 rounded border-slate-300 text-accent focus:ring-accent"
-                    checked={formData.allowedGrades?.includes(grade)} 
-                    onChange={() => toggleGrade(grade)} 
-                  />
-                  <span className="text-xs font-bold text-slate-600">{grade}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-4 pt-10 border-t-2 border-slate-100">
-        <button type="button" onClick={onCancel} className="flex-1 px-8 py-4 border-2 border-slate-100 rounded-2xl text-slate-500 font-bold hover:bg-slate-50 transition-colors">
-          Descartar
-        </button>
-        <button type="submit" className="flex-1 btn-accent py-4 text-lg rounded-2xl">
-          {initialData ? 'Salvar Alterações' : 'Publicar Evento'}
-        </button>
-      </div>
-    </form>
   );
 }
